@@ -1,7 +1,7 @@
 'use client'
 
-import { useState } from 'react'
-import { motion } from 'motion/react'
+import { useState, type CSSProperties } from 'react'
+import { motion, type MotionValue, useTransform } from 'motion/react'
 import { CURRENT_DECISION, PROJECTS } from '@/lib/memory-data'
 import { useAgentRuntime } from './agent-runtime'
 import { ActivityTimeline } from './activity-timeline'
@@ -10,9 +10,12 @@ import { DecisionCard } from './decision-card'
 import { Hero } from './hero'
 import { MemoryInspector } from './memory-inspector'
 import { NetworkStatus } from './network-status'
+import { OperationalLedgerRow } from './operational-ledger-row'
 import { Sidebar } from './sidebar'
+import { StageShell } from './stage-shell'
+import { SystemTimeline } from './system-timeline'
 import { TopBar } from './top-bar'
-import { cn } from '@/lib/utils'
+import { useSystemTimeline, SYSTEM_STAGES, type SystemStage } from '@/hooks/use-system-timeline'
 
 const SECTION_LABEL: Record<string, string> = {
   command: 'Command Center',
@@ -25,91 +28,63 @@ const SECTION_LABEL: Record<string, string> = {
   settings: 'Settings',
 }
 
-const RISK_TONE = (risk: number) =>
-  risk > 0.6 ? 'var(--critical)' : risk > 0.4 ? 'var(--warning)' : 'var(--success)'
+const NAV_STAGE: Record<string, SystemStage> = {
+  command: 'system-init',
+  projects: 'action',
+  memory: 'memory',
+  decisions: 'reason',
+  agents: 'core',
+  actions: 'action',
+  network: 'action',
+  settings: 'system-init',
+}
 
-function ProjectRail({ reducedMotion }: { reducedMotion: boolean }) {
+const RISK_TONE = (risk: number) =>
+  risk > 0.6 ? 'critical' : risk > 0.4 ? 'warning' : 'success'
+
+interface ProjectRailProps {
+  reducedMotion: boolean
+  progress: MotionValue<number>
+  active: boolean
+}
+
+function ProjectRail({ reducedMotion, progress, active }: ProjectRailProps) {
   return (
-    <section aria-label="Projects">
-      <div className="mb-2.5 flex items-baseline justify-between">
-        <h2 className="font-mono text-[10px] tracking-[0.24em] text-muted-foreground/70">
-          PROJECTS
-        </h2>
-        <span className="font-mono text-[9px] tracking-[0.16em] text-muted-foreground/45">
+    <StageShell
+      stage="action"
+      frame="ledger"
+      label="PROJECT LEDGER"
+      tone="neutral"
+      active={active}
+      progress={progress}
+      reducedMotion={reducedMotion}
+      className="project-ledger"
+    >
+      <div className="mb-3 flex items-end justify-between gap-4 px-1">
+        <h2 className="text-[15px] font-medium tracking-[0.08em] text-foreground">PROJECTS</h2>
+        <span className="font-mono text-[9px] tracking-[0.16em] text-muted-foreground/55">
           148 MEMORIES TOTAL
         </span>
       </div>
 
-      <div className="glass overflow-hidden rounded-lg">
+      <div className="ledger-surface overflow-hidden">
         <ul>
-          {PROJECTS.map((project, i) => {
-            const tone = RISK_TONE(project.risk)
-            return (
-              <motion.li
-                key={project.id}
-                initial={reducedMotion ? false : { opacity: 0, x: -10 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: 0.34 + i * 0.07, duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-                className={cn(
-                  'group relative flex items-center gap-3 px-4 py-3 transition-colors hover:bg-white/[0.03]',
-                  i !== PROJECTS.length - 1 && 'border-b border-border',
-                )}
-              >
-                <span className="relative grid size-2 shrink-0 place-items-center">
-                  {project.status === 'ACTIVE' && !reducedMotion && (
-                    <motion.span
-                      className="absolute size-2 rounded-full"
-                      style={{ background: tone }}
-                      animate={{ scale: [1, 2.4, 1], opacity: [0.4, 0, 0.4] }}
-                      transition={{
-                        duration: 2.6,
-                        repeat: Number.POSITIVE_INFINITY,
-                        delay: i * 0.4,
-                      }}
-                    />
-                  )}
-                  <span
-                    className="size-1.5 rounded-full"
-                    style={{
-                      background: project.status === 'ARCHIVED' ? 'var(--muted-foreground)' : tone,
-                      boxShadow:
-                        project.status === 'ARCHIVED' ? 'none' : `0 0 8px ${tone}`,
-                    }}
-                  />
-                </span>
-
-                <div className="min-w-0 flex-1">
-                  <p className="truncate text-[12.5px] text-foreground/90">{project.name}</p>
-                  <p className="font-mono text-[9px] tracking-[0.16em] text-muted-foreground/60">
-                    {project.status} · {project.memories} MEMORIES · {project.owner}
-                  </p>
-                </div>
-
-                {/* risk bar */}
-                <div className="hidden w-20 shrink-0 sm:block">
-                  <div className="h-[3px] overflow-hidden rounded-full bg-white/8">
-                    <motion.div
-                      className="h-full rounded-full"
-                      style={{ background: tone, boxShadow: `0 0 8px ${tone}` }}
-                      initial={reducedMotion ? { width: `${project.risk * 100}%` } : { width: 0 }}
-                      animate={{ width: `${project.risk * 100}%` }}
-                      transition={{
-                        delay: 0.5 + i * 0.08,
-                        duration: 1,
-                        ease: [0.16, 1, 0.3, 1],
-                      }}
-                    />
-                  </div>
-                  <p className="mt-1 font-mono text-[8px] tracking-[0.16em] text-muted-foreground/50">
-                    RISK {Math.round(project.risk * 100)}
-                  </p>
-                </div>
-              </motion.li>
-            )
-          })}
+          {PROJECTS.map((project, index) => (
+            <OperationalLedgerRow
+              key={project.id}
+              name={project.name}
+              status={project.status}
+              metadata={`${project.memories} MEMORIES · ${project.owner}`}
+              tone={`var(--${RISK_TONE(project.risk)})`}
+              risk={project.risk}
+              riskLabel="RISK"
+              reducedMotion={reducedMotion}
+              delay={index * 0.05}
+            />
+          ))}
         </ul>
       </div>
-    </section>
+    </StageShell>
   )
 }
 
@@ -118,6 +93,21 @@ export function Dashboard() {
     useAgentRuntime()
   const [section, setSection] = useState('command')
   const [menuOpen, setMenuOpen] = useState(false)
+  const {
+    targetRef,
+    atmosphere,
+    activeStage,
+    stageProgress,
+    stageRefs,
+    progress,
+    scrollToStage,
+  } = useSystemTimeline({ state, selectedId, reducedMotion })
+  const atmosphericShift = useTransform(progress, [0, 1], [0, -72])
+  const activeStageMeta = SYSTEM_STAGES.find((stage) => stage.id === activeStage) ?? SYSTEM_STAGES[0]
+  const activeNavLabel = section === 'command'
+    ? `${activeStageMeta.index} / ${activeStageMeta.label}`
+    : SECTION_LABEL[section] ?? activeStageMeta.label
+  const coreActive = activeStage === 'core' || activeStage === 'memory' || activeStage === 'recall'
 
   return (
     <div className="flex min-h-screen">
@@ -126,6 +116,7 @@ export function Dashboard() {
         onNavigate={(id) => {
           setSection(id)
           setMenuOpen(false)
+          scrollToStage(NAV_STAGE[id] ?? 'system-init')
         }}
         open={menuOpen}
         onClose={() => setMenuOpen(false)}
@@ -134,66 +125,137 @@ export function Dashboard() {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar
-          section={SECTION_LABEL[section] ?? section}
+          section={activeNavLabel}
           onMenu={() => setMenuOpen(true)}
           reducedMotion={reducedMotion}
         />
 
-        <main className="flex-1 px-4 py-8 sm:px-6 sm:py-10 lg:px-8">
-          <div className="mx-auto flex max-w-[1400px] flex-col gap-8">
-            <Hero reducedMotion={reducedMotion} />
+        <motion.main
+          ref={targetRef}
+          style={{ '--scroll-depth': atmosphere } as CSSProperties}
+          className="relative flex-1 px-4 py-8 sm:px-6 lg:px-8 lg:py-10"
+        >
+          <motion.div
+            aria-hidden
+            className="scroll-depth-wash pointer-events-none absolute inset-x-0 top-0 h-[52rem]"
+            style={{ opacity: atmosphere, y: atmosphericShift }}
+          />
+          <motion.div
+            aria-hidden
+            className="ambient-depth-orbit pointer-events-none absolute top-[16rem] right-[-14rem] h-[34rem] w-[34rem]"
+            style={{ opacity: atmosphere, y: atmosphericShift }}
+          />
 
-            {/* primary workspace */}
-            <div className="grid gap-4 xl:grid-cols-[minmax(0,1.6fr)_minmax(0,1fr)]">
-              <div className="flex flex-col gap-4">
-                <CommandPanel
-                  state={state}
-                  selectedId={selectedId}
-                  activeIds={activeMemoryIds}
-                  onSelect={select}
-                  onSubmit={runQuery}
-                  reducedMotion={reducedMotion}
-                />
-                <NetworkStatus reducedMotion={reducedMotion} />
-              </div>
+          <div className="relative mx-auto max-w-[1540px]">
+            <div className="system-canvas">
+              <SystemTimeline
+                activeStage={activeStage}
+                progress={progress}
+                stageProgress={stageProgress}
+                reducedMotion={reducedMotion}
+                onStageSelect={scrollToStage}
+              />
 
-              <div className="flex min-h-0 flex-col gap-4">
-                <DecisionCard
-                  decision={CURRENT_DECISION}
-                  onSelect={select}
-                  reducedMotion={reducedMotion}
-                />
-                <MemoryInspector
-                  memoryId={selectedId}
-                  onClose={() => select(null)}
-                  onSelect={select}
-                  reducedMotion={reducedMotion}
-                />
-                <div className="min-h-[280px] flex-1">
-                  <ActivityTimeline
-                    events={activity}
-                    reducedMotion={reducedMotion}
+              <div className="system-narrative">
+                <section
+                  ref={stageRefs['system-init']}
+                  data-system-stage="system-init"
+                  className="system-stage system-stage--init"
+                  aria-label="System initialization"
+                >
+                  <Hero reducedMotion={reducedMotion} />
+                </section>
+
+                <section
+                  ref={stageRefs.core}
+                  data-system-stage="core"
+                  className="system-stage system-stage--core"
+                  aria-label="Core memory field"
+                >
+                  <CommandPanel
+                    state={state}
+                    selectedId={selectedId}
+                    activeIds={activeMemoryIds}
                     onSelect={select}
+                    onSubmit={runQuery}
+                    reducedMotion={reducedMotion}
+                    stageProgress={stageProgress.core}
+                    active={coreActive}
+                    recallAnchorRef={stageRefs.recall}
                   />
-                </div>
+                </section>
+
+                <section
+                  ref={stageRefs.memory}
+                  data-system-stage="memory"
+                  className="system-stage system-stage--memory"
+                  aria-label="Memory evidence"
+                >
+                  <MemoryInspector
+                    memoryId={selectedId}
+                    onClose={() => select(null)}
+                    onSelect={select}
+                    reducedMotion={reducedMotion}
+                    progress={stageProgress.memory}
+                    active={activeStage === 'memory'}
+                  />
+                </section>
+
+                <section
+                  ref={stageRefs.reason}
+                  data-system-stage="reason"
+                  className="system-stage system-stage--reason"
+                  aria-label="Reasoned decision"
+                >
+                  <DecisionCard
+                    decision={CURRENT_DECISION}
+                    onSelect={select}
+                    reducedMotion={reducedMotion}
+                    progress={stageProgress.reason}
+                    active={activeStage === 'reason'}
+                  />
+                </section>
+
+                <section
+                  ref={stageRefs.action}
+                  data-system-stage="action"
+                  className="system-stage system-stage--action"
+                  aria-label="Action verification"
+                >
+                  <div className="action-deck">
+                    <div className="action-deck__trace">
+                      <ActivityTimeline
+                        events={activity}
+                        reducedMotion={reducedMotion}
+                        onSelect={select}
+                        progress={stageProgress.action}
+                        active={activeStage === 'action'}
+                      />
+                    </div>
+                    <div className="action-deck__verification">
+                      <NetworkStatus
+                        reducedMotion={reducedMotion}
+                        progress={stageProgress.action}
+                        active={activeStage === 'action'}
+                      />
+                      <ProjectRail
+                        reducedMotion={reducedMotion}
+                        progress={stageProgress.action}
+                        active={activeStage === 'action'}
+                      />
+                    </div>
+                  </div>
+                </section>
+
+                <footer className="mt-14 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-border pt-5 pb-2">
+                  <span className="type-label text-muted-foreground/55">MEMORYOS v2.4.1</span>
+                  <span className="type-label text-muted-foreground/40">MEMORY LAYER: SIBYL</span>
+                  <span className="ml-auto type-label text-muted-foreground/40">BUILT ON BASE · VIRTUALS ACP</span>
+                </footer>
               </div>
             </div>
-
-            <ProjectRail reducedMotion={reducedMotion} />
-
-            <footer className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-border pt-5 pb-2">
-              <span className="font-mono text-[9px] tracking-[0.2em] text-muted-foreground/50">
-                MEMORYOS v2.4.1
-              </span>
-              <span className="font-mono text-[9px] tracking-[0.2em] text-muted-foreground/35">
-                MEMORY LAYER: SIBYL
-              </span>
-              <span className="ml-auto font-mono text-[9px] tracking-[0.2em] text-muted-foreground/35">
-                BUILT ON BASE · VIRTUALS ACP
-              </span>
-            </footer>
           </div>
-        </main>
+        </motion.main>
       </div>
     </div>
   )

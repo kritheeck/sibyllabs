@@ -29,12 +29,12 @@ export function TopBar({ section, onMenu, reducedMotion }: TopBarProps) {
   }, [])
 
   return (
-    <header className="sticky top-0 z-30 border-b border-border bg-[color-mix(in_oklab,var(--background)_72%,transparent)] backdrop-blur-xl">
+    <header className="sticky top-0 z-30 border-b border-border bg-[color-mix(in_oklab,var(--background)_88%,transparent)] backdrop-blur-md">
       <div className="flex h-14 items-center gap-3 px-4 sm:px-6">
         <button
           type="button"
           onClick={onMenu}
-          className="grid size-9 place-items-center rounded-md border border-border text-muted-foreground transition-colors hover:text-foreground lg:hidden"
+           className="grid size-9 min-h-11 min-w-11 place-items-center rounded-md border border-border text-muted-foreground transition-colors hover:text-foreground lg:hidden"
           aria-label="Open navigation"
         >
           <Menu className="size-4" />
@@ -88,7 +88,7 @@ export function TopBar({ section, onMenu, reducedMotion }: TopBarProps) {
 
           <button
             type="button"
-            className="relative grid size-9 place-items-center rounded-md border border-border text-muted-foreground transition-colors hover:border-primary/30 hover:text-foreground"
+            className="relative grid size-9 min-h-11 min-w-11 place-items-center rounded-md border border-border text-muted-foreground transition-colors hover:border-primary/30 hover:text-foreground"
             aria-label="Notifications, 3 unread"
           >
             <Bell className="size-4" strokeWidth={1.6} />
@@ -102,7 +102,7 @@ export function TopBar({ section, onMenu, reducedMotion }: TopBarProps) {
 
           <button
             type="button"
-            className="grid size-9 place-items-center rounded-md border border-primary/25 font-mono text-[11px] text-primary transition-colors hover:border-primary/50"
+            className="grid size-9 min-h-11 min-w-11 place-items-center rounded-md border border-primary/25 font-mono text-[11px] text-primary transition-colors hover:border-primary/50"
             style={{
               background:
                 'linear-gradient(145deg, color-mix(in oklab, var(--primary) 16%, transparent), transparent)',

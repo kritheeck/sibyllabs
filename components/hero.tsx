@@ -2,7 +2,8 @@
 
 import { motion } from 'motion/react'
 import { METRICS } from '@/lib/memory-data'
-import { MetricCard } from './metric-card'
+import { SignalLine, TechnicalLabel } from './system-primitives'
+import { TelemetryRail } from './telemetry-rail'
 
 const TITLE = 'MEMORYOS'
 
@@ -12,37 +13,39 @@ interface HeroProps {
 
 export function Hero({ reducedMotion }: HeroProps) {
   return (
-    <section className="relative" aria-label="Overview">
-      <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,440px)] lg:items-end">
-        <div>
-          {/* eyebrow */}
+    <motion.section
+      initial={reducedMotion ? false : { opacity: 0, y: 14 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.72, ease: [0.22, 1, 0.36, 1] }}
+      className="identity-mast relative"
+      aria-label="Overview"
+    >
+      <div className="grid gap-9 md:grid-cols-[minmax(0,3fr)_minmax(240px,2fr)] md:items-end lg:grid-cols-[minmax(0,1fr)_minmax(360px,1.08fr)] lg:gap-12">
+        <div className="relative min-w-0 pl-5 sm:pl-7">
+          <span className="identity-datum" aria-hidden />
+
           <motion.div
-            initial={reducedMotion ? false : { opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6 }}
-            className="inline-flex items-center gap-2 rounded-full border border-border px-2.5 py-1"
+            initial={reducedMotion ? false : { opacity: 0, x: -8 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.12, duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+            className="inline-flex max-w-full items-center gap-2 border-b border-border pb-2"
           >
-            <span className="size-1 rounded-full bg-primary" />
-            <span className="font-mono text-[9px] tracking-[0.24em] text-muted-foreground">
-              PERSISTENT OPERATIONAL MEMORY
-            </span>
+            <span className="size-1.5 shrink-0 rounded-full bg-primary" />
+            <span className="type-label truncate text-muted-foreground">PERSISTENT OPERATIONAL MEMORY</span>
           </motion.div>
 
-          {/* headline — letters resolve into place */}
-          <h1 className="mt-5 flex text-[clamp(2.6rem,8vw,5.2rem)] leading-[0.92] font-light tracking-[-0.03em] text-foreground">
+          <h1 className="type-display mt-5 max-w-full whitespace-nowrap text-foreground">
             <span className="sr-only">MEMORYOS</span>
-            {TITLE.split('').map((char, i) => (
+            {TITLE.split('').map((char, index) => (
               <motion.span
-                key={`${char}-${i}`}
+                key={`${char}-${index}`}
                 aria-hidden
-                className={i < 6 ? 'text-foreground' : 'text-primary text-shadow-glow'}
-                initial={
-                  reducedMotion ? false : { opacity: 0, y: 22, filter: 'blur(8px)' }
-                }
+                className={index < 6 ? 'text-foreground' : 'text-primary text-shadow-glow'}
+                initial={reducedMotion ? false : { opacity: 0, y: 18, filter: 'blur(6px)' }}
                 animate={{ opacity: 1, y: 0, filter: 'blur(0px)' }}
                 transition={{
-                  delay: 0.08 + i * 0.045,
-                  duration: 0.75,
+                  delay: 0.16 + index * 0.04,
+                  duration: 0.66,
                   ease: [0.22, 1, 0.36, 1],
                 }}
               >
@@ -52,38 +55,32 @@ export function Hero({ reducedMotion }: HeroProps) {
           </h1>
 
           <motion.p
-            initial={reducedMotion ? false : { opacity: 0, y: 12 }}
+            initial={reducedMotion ? false : { opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.5, duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
-            className="mt-5 max-w-xl text-[17px] leading-relaxed text-pretty text-foreground/85 sm:text-[19px]"
+            transition={{ delay: 0.5, duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
+            className="mt-4 max-w-xl text-[17px] leading-[1.35] text-foreground/85 sm:text-[19px]"
           >
             Your agent remembers what you don&apos;t.
           </motion.p>
 
           <motion.p
-            initial={reducedMotion ? false : { opacity: 0, y: 12 }}
+            initial={reducedMotion ? false : { opacity: 0, y: 8 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.62, duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
-            className="mt-2 max-w-lg text-[13px] leading-relaxed text-pretty text-muted-foreground"
+            transition={{ delay: 0.6, duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
+            className="type-body mt-2 max-w-lg text-[13px] text-muted-foreground"
           >
             Persistent operational memory that changes what your AI does next.
           </motion.p>
+
+          <div className="mt-6 flex max-w-md items-center gap-3">
+            <TechnicalLabel tone="neutral" className="shrink-0 text-muted-foreground/55">SYSTEM INDEX</TechnicalLabel>
+            <SignalLine tone="primary" active={!reducedMotion} className="opacity-55" />
+            <span className="font-mono text-[9px] tracking-[0.16em] text-muted-foreground/45">SIBYL</span>
+          </div>
         </div>
 
-        {/* metrics */}
-        <div className="grid gap-2.5 sm:grid-cols-3 lg:grid-cols-1 xl:grid-cols-3">
-          {METRICS.map((metric, i) => (
-            <MetricCard
-              key={metric.id}
-              value={metric.value}
-              label={metric.label}
-              delta={metric.delta}
-              index={i}
-              reducedMotion={reducedMotion}
-            />
-          ))}
-        </div>
+        <TelemetryRail metrics={METRICS} reducedMotion={reducedMotion} />
       </div>
-    </section>
+    </motion.section>
   )
 }

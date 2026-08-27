@@ -74,7 +74,7 @@ function SidebarBody({ active, onNavigate, reducedMotion, onClose }: SidebarProp
           <button
             type="button"
             onClick={onClose}
-            className="ml-auto grid size-8 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground lg:hidden"
+             className="ml-auto grid size-8 min-h-11 min-w-11 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-white/5 hover:text-foreground lg:hidden"
             aria-label="Close navigation"
           >
             <X className="size-4" />

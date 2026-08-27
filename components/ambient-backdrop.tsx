@@ -53,7 +53,7 @@ export function AmbientBackdrop() {
       canvas.height = Math.floor(height * dpr)
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
 
-      const target = Math.min(90, Math.round((width * height) / 22000))
+      const target = Math.min(68, Math.round((width * height) / 28000))
       particles.length = 0
       for (let i = 0; i < target; i++) {
         const z = Math.random()
@@ -68,7 +68,7 @@ export function AmbientBackdrop() {
     }
 
     const spawnStream = () => {
-      if (streams.length > 3) return
+      if (streams.length > 2) return
       streams.push({
         axis: Math.random() > 0.45 ? 1 : 0,
         offset: Math.random(),
@@ -119,7 +119,7 @@ export function AmbientBackdrop() {
 
       // data streams
       streamTimer += dt
-      if (streamTimer > 2600) {
+      if (streamTimer > 3800) {
         streamTimer = 0
         spawnStream()
       }
@@ -193,7 +193,7 @@ export function AmbientBackdrop() {
         className="absolute inset-0"
         style={{
           background:
-            'radial-gradient(120% 80% at 50% -10%, oklch(0.27 0.055 245 / 0.55) 0%, transparent 60%), radial-gradient(90% 60% at 85% 105%, oklch(0.28 0.07 292 / 0.28) 0%, transparent 65%), linear-gradient(180deg, oklch(0.135 0.014 255) 0%, oklch(0.115 0.012 258) 100%)',
+            'radial-gradient(120% 80% at 50% -10%, oklch(0.27 0.055 245 / 0.36) 0%, transparent 60%), radial-gradient(90% 60% at 85% 105%, oklch(0.28 0.07 292 / 0.18) 0%, transparent 65%), linear-gradient(180deg, oklch(0.135 0.014 255) 0%, oklch(0.115 0.012 258) 100%)',
         }}
       />
       {/* faint grid */}

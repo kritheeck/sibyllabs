@@ -1,99 +1,78 @@
 'use client'
 
-import { motion } from 'motion/react'
+import { motion, type MotionValue } from 'motion/react'
 import { INTEGRATIONS } from '@/lib/memory-data'
+import { SemanticSignal } from './semantic-signal'
+import { StageShell } from './stage-shell'
+import { cn } from '@/lib/utils'
 
 const STATUS_TONE = {
-  CONNECTED: 'var(--success)',
-  SYNCING: 'var(--warning)',
-  OFFLINE: 'var(--muted-foreground)',
+  CONNECTED: 'success',
+  SYNCING: 'warning',
+  OFFLINE: 'neutral',
 } as const
 
 interface NetworkStatusProps {
   reducedMotion: boolean
+  progress?: MotionValue<number>
+  active?: boolean
 }
 
-export function NetworkStatus({ reducedMotion }: NetworkStatusProps) {
+export function NetworkStatus({ reducedMotion, progress, active = false }: NetworkStatusProps) {
   return (
-    <section aria-label="Network integrations">
-      <div className="mb-2.5 flex items-baseline justify-between">
-        <h2 className="font-mono text-[10px] tracking-[0.24em] text-muted-foreground/70">
-          NETWORK
-        </h2>
-        <span className="font-mono text-[9px] tracking-[0.16em] text-muted-foreground/45">
-          3 / 3 LINKED
-        </span>
+    <StageShell
+      stage="action"
+      frame="telemetry"
+      label="SYSTEM LINKS"
+      tone="success"
+      active={active}
+      progress={progress}
+      reducedMotion={reducedMotion}
+      className="network-status"
+    >
+      <div className="mb-3 flex items-end justify-between gap-4 px-1">
+        <h2 className="text-[15px] font-medium tracking-[0.08em] text-foreground">NETWORK</h2>
+        <span className="font-mono text-[9px] tracking-[0.16em] text-muted-foreground/55">3 / 3 LINKED</span>
       </div>
 
-      <div className="grid gap-2.5 sm:grid-cols-3">
-        {INTEGRATIONS.map((item, i) => {
+      <div className="network-rail grid md:grid-cols-3">
+        {INTEGRATIONS.map((item, index) => {
           const tone = STATUS_TONE[item.status]
+          const syncing = item.status === 'SYNCING'
           return (
-            <motion.article
+            <div
               key={item.id}
-              initial={reducedMotion ? false : { opacity: 0, y: 14 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.3 + i * 0.08, duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
-              whileHover={reducedMotion ? undefined : { y: -2 }}
-              className="glass group relative overflow-hidden rounded-lg px-3.5 py-3"
+              className={cn(
+                'relative min-w-0 px-4 py-4 sm:px-5',
+                index > 0 && 'border-t border-border md:border-t-0 md:border-l',
+              )}
             >
-              {/* transmission bar */}
-              {!reducedMotion && (
+              {syncing && !reducedMotion && (
                 <motion.span
                   aria-hidden
-                  className="absolute top-0 left-0 h-px w-10"
-                  style={{
-                    background: `linear-gradient(90deg, transparent, ${tone}, transparent)`,
-                  }}
-                  animate={{ x: ['-2.5rem', '110%'] }}
-                  transition={{
-                    duration: 2.8,
-                    repeat: Number.POSITIVE_INFINITY,
-                    repeatDelay: 1.6 + i * 0.9,
-                    ease: 'easeInOut',
-                  }}
+                  className="absolute top-0 left-0 h-px w-14"
+                  style={{ background: 'linear-gradient(90deg, transparent, var(--warning), transparent)' }}
+                  animate={{ x: ['-3.5rem', 'calc(100% + 3.5rem)'] }}
+                  transition={{ duration: 2.2, repeat: Number.POSITIVE_INFINITY, repeatDelay: 2.2, ease: 'easeInOut' }}
                 />
               )}
 
               <div className="flex items-center gap-2">
-                <motion.span
-                  className="size-1.5 shrink-0 rounded-full"
-                  style={{ background: tone, boxShadow: `0 0 8px ${tone}` }}
-                  animate={reducedMotion ? undefined : { opacity: [1, 0.35, 1] }}
-                  transition={{
-                    duration: 2.4,
-                    repeat: Number.POSITIVE_INFINITY,
-                    delay: i * 0.5,
-                  }}
-                />
-                <h3 className="truncate font-mono text-[10px] tracking-[0.16em] text-foreground/90">
-                  {item.name}
-                </h3>
+                <SemanticSignal tone={`var(--${tone === 'neutral' ? 'muted-foreground' : tone})`} pulse={syncing} reducedMotion={reducedMotion} />
+                <h3 className="truncate font-mono text-[10px] tracking-[0.16em] text-foreground/90">{item.name}</h3>
               </div>
-
-              <p className="mt-1.5 truncate text-[11px] text-muted-foreground/70">
-                {item.descriptor}
-              </p>
-
-              <div className="mt-2.5 flex items-center justify-between gap-2">
-                <span
-                  className="font-mono text-[9px] tracking-[0.16em]"
-                  style={{ color: tone }}
-                >
+              <p className="mt-2 truncate text-[11px] text-muted-foreground/75">{item.descriptor}</p>
+              <div className="mt-3 flex items-center justify-between gap-2">
+                <span className="font-mono text-[9px] tracking-[0.16em]" style={{ color: `var(--${tone === 'neutral' ? 'muted-foreground' : tone})` }}>
                   {item.status}
                 </span>
-                <span className="font-mono text-[9px] text-muted-foreground/50 tabular-nums">
-                  {item.latencyMs}ms
-                </span>
+                <span className="font-mono text-[9px] text-muted-foreground/55 tabular-nums">{item.latencyMs}ms</span>
               </div>
-
-              <p className="mt-1 truncate font-mono text-[9px] text-muted-foreground/35">
-                {item.hash}
-              </p>
-            </motion.article>
+              <p className="mt-1.5 truncate font-mono text-[9px] text-muted-foreground/45">{item.hash}</p>
+            </div>
           )
         })}
       </div>
-    </section>
+    </StageShell>
   )
 }

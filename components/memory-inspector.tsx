@@ -3,11 +3,12 @@
 import { AnimatePresence, motion, type MotionValue } from 'motion/react'
 import { X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { TYPE_META, getMemory, type MemoryRecord } from '@/lib/memory-data'
+import { TYPE_META, type MemoryRecord } from '@/lib/memory-data'
 import { EvidenceRow } from './evidence-row'
 import { DataReadout, TechnicalLabel } from './system-primitives'
 import { StageShell } from './stage-shell'
 import type { FrameTone } from './system-primitives'
+import { useMemoryGraph } from '@/lib/memory-context'
 
 const IMPORTANCE_TONE: Record<MemoryRecord['importance'], FrameTone> = {
   CRITICAL: 'critical',
@@ -68,6 +69,7 @@ export function MemoryInspector({
   progress,
   active = false,
 }: MemoryInspectorProps) {
+  const { getMemory } = useMemoryGraph()
   const memory = memoryId ? getMemory(memoryId) : undefined
   const tone = memory ? MEMORY_FRAME_TONE[memory.type] : 'neutral'
   const color = memory ? TYPE_META[memory.type].hex : 'var(--primary)'

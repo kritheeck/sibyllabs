@@ -2,7 +2,8 @@
 
 import { motion } from 'motion/react'
 import { Button } from '@/components/ui/button'
-import { MEMORY_NODES, TYPE_META } from '@/lib/memory-data'
+import { TYPE_META } from '@/lib/memory-data'
+import { useMemoryGraph } from '@/lib/memory-context'
 import { cn } from '@/lib/utils'
 
 interface MemoryGraph2DProps {
@@ -22,9 +23,35 @@ export function MemoryGraph2D({
   onSelect,
   reducedMotion,
 }: MemoryGraph2DProps) {
+  const { nodes, loading, error } = useMemoryGraph()
+
+  if (error) {
+    return (
+      <div className="flex h-full max-h-[420px] items-center justify-center px-3 py-3 sm:px-4">
+        <div className="flex flex-col items-center gap-2">
+          <p className="type-label text-muted-foreground/70">MEMORY LAYER UNAVAILABLE</p>
+          <p className="font-mono text-[10px] tracking-[0.14em] text-muted-foreground/50">{error}</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (!loading && nodes.length === 0) {
+    return (
+      <div className="flex h-full max-h-[420px] items-center justify-center px-3 py-3 sm:px-4">
+        <div className="flex flex-col items-center gap-2">
+          <p className="type-label text-muted-foreground/70">NO MEMORIES STORED</p>
+          <p className="font-mono text-[10px] tracking-[0.14em] text-muted-foreground/50">
+            Query the memory layer to populate the field
+          </p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <ul className="scrollbar-thin flex h-full max-h-[420px] flex-col gap-1 overflow-y-auto px-3 py-3 sm:px-4">
-      {MEMORY_NODES.map((node, i) => {
+      {nodes.map((node, i) => {
         const meta = TYPE_META[node.type]
         const isActive = activeIds.includes(node.id)
         const isSelected = selectedId === node.id

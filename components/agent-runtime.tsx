@@ -10,11 +10,12 @@ import {
   useState,
 } from 'react'
 import {
-  ACTIVITY_FEED,
   ACTIVITY_STREAM,
   type ActivityEvent,
   type AgentState,
 } from '@/lib/memory-data'
+import { useMemoryGraph } from '@/lib/memory-context'
+import { searchMemories, type MemorySearchResponse } from '@/lib/memory-client'
 import { useReducedMotion } from '@/hooks/use-reduced-motion'
 
 interface AgentRuntimeValue {
@@ -94,13 +95,10 @@ function clockLabel(offsetSeconds = 0) {
 
 export function AgentRuntimeProvider({ children }: { children: React.ReactNode }) {
   const reducedMotion = useReducedMotion()
+  const { nodes, loading, error, search } = useMemoryGraph()
   const [state, setState] = useState<AgentState>('RECALLING')
-  const [activeMemoryIds, setActiveMemoryIds] = useState<string[]>([
-    'dec-17',
-    'con-backup',
-    'inc-12',
-  ])
-  const [activity, setActivity] = useState<ActivityEvent[]>(ACTIVITY_FEED)
+  const [activeMemoryIds, setActiveMemoryIds] = useState<string[]>([])
+  const [activity, setActivity] = useState<ActivityEvent[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [lastQuery, setLastQuery] = useState<string | null>(null)
   const queryRunning = useRef(false)
@@ -152,15 +150,19 @@ export function AgentRuntimeProvider({ children }: { children: React.ReactNode }
     let i = 0
     const interval = setInterval(() => {
       if (queryRunning.current) return
-      pushEvent(ACTIVITY_STREAM[i % ACTIVITY_STREAM.length])
+      const event = ACTIVITY_STREAM[i % ACTIVITY_STREAM.length]
+      const enriched = event.memoryIds?.length
+        ? { ...event, memoryIds: event.memoryIds.filter((id) => nodes.some((n) => n.id === id)) }
+        : event
+      pushEvent(enriched)
       i += 1
     }, 7000)
     return () => clearInterval(interval)
-  }, [pushEvent, reducedMotion])
+  }, [pushEvent, reducedMotion, nodes])
 
   /* ------------------------------------------------------------ query run */
   const runQuery = useCallback(
-    (query: string) => {
+    async (query: string) => {
       const trimmed = query.trim()
       if (!trimmed) return
       setLastQuery(trimmed)
@@ -177,16 +179,32 @@ export function AgentRuntimeProvider({ children }: { children: React.ReactNode }
         elapsed += reducedMotion ? Math.min(step.hold, 220) : step.hold
       })
 
-      const done = setTimeout(() => {
-        queryRunning.current = false
-        setState('LISTENING')
+      const done = setTimeout(async () => {
+        try {
+          const result = await search(trimmed, 20)
+          if (result.memories.length > 0) {
+            setActiveMemoryIds(result.memories.map((m) => m.id))
+          }
+        } catch {
+          // keep current activeMemoryIds on search failure
+        } finally {
+          queryRunning.current = false
+          setState('LISTENING')
+        }
       }, elapsed + 400)
       timers.current.push(done)
     },
-    [clearTimers, pushEvent, reducedMotion],
+    [clearTimers, pushEvent, reducedMotion, search],
   )
 
   useEffect(() => clearTimers, [clearTimers])
+
+  useEffect(() => {
+    if (!loading && nodes.length > 0 && activeMemoryIds.length === 0) {
+      const firstIds = nodes.slice(0, 3).map((n) => n.id)
+      setActiveMemoryIds(firstIds)
+    }
+  }, [loading, nodes, activeMemoryIds.length])
 
   const value = useMemo<AgentRuntimeValue>(
     () => ({

@@ -3,10 +3,11 @@
 import { useEffect, useState } from 'react'
 import { animate, motion, useMotionValue } from 'motion/react'
 import { ShieldAlert, ShieldCheck, Timer } from 'lucide-react'
-import { type DecisionRecord, getMemory } from '@/lib/memory-data'
+import { type DecisionRecord } from '@/lib/memory-data'
 import { EvidenceRow } from './evidence-row'
 import { SignalLine, TechnicalLabel } from './system-primitives'
 import { StageShell } from './stage-shell'
+import { useMemoryGraph } from '@/lib/memory-context'
 import type { FrameTone } from './system-primitives'
 import type { MotionValue } from 'motion/react'
 
@@ -89,6 +90,7 @@ interface DecisionCardProps {
 }
 
 export function DecisionCard({ decision, onSelect, reducedMotion, progress, active = false }: DecisionCardProps) {
+  const { getMemory } = useMemoryGraph()
   const meta = OUTCOME_META[decision.outcome]
   const Icon = meta.icon
 

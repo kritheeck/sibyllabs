@@ -3,11 +3,12 @@
 import dynamic from 'next/dynamic'
 import { useEffect, useRef, useState, type RefObject } from 'react'
 import { AnimatePresence, motion, type MotionValue } from 'motion/react'
-import { AGENT, MEMORY_NODES, type AgentState } from '@/lib/memory-data'
+import { AGENT, type AgentState } from '@/lib/memory-data'
 import { AgentStatus } from './agent-status'
 import { CommandRail } from './command-rail'
 import { MemoryGraph2D } from './memory-graph-2d'
 import { StageShell } from './stage-shell'
+import { useMemoryGraph } from '@/lib/memory-context'
 
 const MemoryGraph = dynamic(() => import('./memory-graph').then((module) => module.MemoryGraph), {
   ssr: false,
@@ -54,6 +55,7 @@ export function CommandPanel({
   active = false,
   recallAnchorRef,
 }: CommandPanelProps) {
+  const { nodes } = useMemoryGraph()
   const [value, setValue] = useState('')
   const [focused, setFocused] = useState(false)
   const [is3D, setIs3D] = useState(true)
@@ -152,7 +154,7 @@ export function CommandPanel({
               />
               <div className="pointer-events-none absolute top-4 right-5 flex flex-col items-end gap-1">
                 <span className="type-label text-muted-foreground/55">MEMORY CONSTELLATION</span>
-                <span className="type-label text-muted-foreground/38">{MEMORY_NODES.length} NODES · 22 EDGES</span>
+                <span className="type-label text-muted-foreground/38">{nodes.length} NODES · 22 EDGES</span>
               </div>
               <div className="pointer-events-none absolute bottom-4 right-5 hidden items-center gap-2 font-mono text-[9px] tracking-[0.16em] text-muted-foreground/35 sm:flex">
                 <span className="size-1 rounded-full bg-primary/60" />

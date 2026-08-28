@@ -2,7 +2,8 @@
 
 import { ArrowUpRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { TYPE_META, getMemory, type MemoryRecord } from '@/lib/memory-data'
+import { TYPE_META, type MemoryRecord } from '@/lib/memory-data'
+import { useMemoryGraph } from '@/lib/memory-context'
 import { cn } from '@/lib/utils'
 
 interface EvidenceRowProps {
@@ -23,6 +24,7 @@ export function EvidenceRow({
   selected = false,
   className,
 }: EvidenceRowProps) {
+  const { getMemory } = useMemoryGraph()
   const memory = getMemory(memoryId)
   if (!memory) return null
 

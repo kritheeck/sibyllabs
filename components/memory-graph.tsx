@@ -5,11 +5,11 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { Html, Line } from '@react-three/drei'
 import * as THREE from 'three'
 import {
-  MEMORY_EDGES,
-  MEMORY_NODES,
   TYPE_META,
+  type MemoryEdge,
   type MemoryRecord,
 } from '@/lib/memory-data'
+import { useMemoryGraph } from '@/lib/memory-context'
 import { MemoryNode } from './memory-node'
 
 const SCALE = 2.35
@@ -150,6 +150,7 @@ function GraphEdge({
 
 interface SceneProps {
   nodes: MemoryRecord[]
+  edges: MemoryEdge[]
   selectedId: string | null
   hoveredId: string | null
   activeIds: string[]
@@ -160,6 +161,7 @@ interface SceneProps {
 
 function Scene({
   nodes,
+  edges,
   selectedId,
   hoveredId,
   activeIds,
@@ -181,12 +183,12 @@ function Scene({
   const neighbourSet = useMemo(() => {
     if (!focusId) return null
     const set = new Set<string>([focusId])
-    MEMORY_EDGES.forEach((e) => {
+    edges.forEach((e) => {
       if (e.from === focusId) set.add(e.to)
       if (e.to === focusId) set.add(e.from)
     })
     return set
-  }, [focusId])
+  }, [focusId, edges])
 
   useFrame((state, delta) => {
     if (!group.current) return
@@ -195,7 +197,6 @@ function Scene({
       return
     }
     const t = state.clock.elapsedTime
-    // slow autonomous orbit + very light parallax toward the cursor
     group.current.rotation.y += delta * 0.045
     const targetX = -pointer.y * 0.16 + Math.sin(t * 0.22) * 0.05
     const targetZ = pointer.x * 0.05
@@ -213,7 +214,7 @@ function Scene({
       <ParticleField reducedMotion={reducedMotion} />
 
       <group ref={group}>
-        {MEMORY_EDGES.map((edge, i) => {
+        {edges.map((edge, i) => {
           const from = positions.get(edge.from)
           const to = positions.get(edge.to)
           if (!from || !to) return null
@@ -274,11 +275,39 @@ export function MemoryGraph({
   onSelect,
   reducedMotion,
 }: MemoryGraphProps) {
+  const { nodes, edges, loading, error } = useMemoryGraph()
   const [hoveredId, setHoveredId] = useState<string | null>(null)
-  const hovered = hoveredId ? MEMORY_NODES.find((n) => n.id === hoveredId) : null
+  const hovered = hoveredId ? nodes.find((n) => n.id === hoveredId) : null
+
+  const renderOverlay = () => {
+    if (error) {
+      return (
+        <div className="absolute inset-0 grid place-items-center bg-surface-stage">
+          <div className="flex flex-col items-center gap-3">
+            <p className="type-label text-muted-foreground/70">MEMORY LAYER UNAVAILABLE</p>
+            <p className="font-mono text-[10px] tracking-[0.14em] text-muted-foreground/50">{error}</p>
+          </div>
+        </div>
+      )
+    }
+    if (!loading && nodes.length === 0) {
+      return (
+        <div className="absolute inset-0 grid place-items-center bg-surface-stage">
+          <div className="flex flex-col items-center gap-3">
+            <p className="type-label text-muted-foreground/70">NO MEMORIES STORED</p>
+            <p className="font-mono text-[10px] tracking-[0.14em] text-muted-foreground/50">
+              Query the memory layer to populate the field
+            </p>
+          </div>
+        </div>
+      )
+    }
+    return null
+  }
 
   return (
     <div className="absolute inset-0">
+      {renderOverlay()}
       <Canvas
         camera={{ position: [0, 1.1, 8.4], fov: 42 }}
         dpr={[1, 1.75]}
@@ -287,7 +316,8 @@ export function MemoryGraph({
       >
         <Suspense fallback={null}>
           <Scene
-            nodes={MEMORY_NODES}
+            nodes={nodes}
+            edges={edges}
             selectedId={selectedId}
             hoveredId={hoveredId}
             activeIds={activeIds}

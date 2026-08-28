@@ -125,7 +125,7 @@ export function SegmentRail({
         ? { scaleX: progress }
         : { scaleY: progress }
       : {}),
-  } as CSSProperties
+  } as unknown as CSSProperties
 
   return (
     <motion.span

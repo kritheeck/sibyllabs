@@ -89,7 +89,7 @@ function ProjectRail({ reducedMotion, progress, active }: ProjectRailProps) {
 }
 
 export function Dashboard() {
-  const { state, activeMemoryIds, activity, selectedId, select, runQuery, reducedMotion } =
+  const { state, activeMemoryIds, activity, selectedId, select, runQuery, lastDecision, reducedMotion } =
     useAgentRuntime()
   const [section, setSection] = useState('command')
   const [menuOpen, setMenuOpen] = useState(false)
@@ -182,6 +182,7 @@ export function Dashboard() {
                     stageProgress={stageProgress.core}
                     active={coreActive}
                     recallAnchorRef={stageRefs.recall}
+                    lastDecision={lastDecision}
                   />
                 </section>
 

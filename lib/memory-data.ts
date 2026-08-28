@@ -69,7 +69,7 @@ export interface ActivityEvent {
     | 'ACTION DISPATCHED'
   detail: string
   memoryIds?: string[]
-  tone?: 'default' | 'critical' | 'success'
+  tone?: 'default' | 'critical' | 'success' | 'warning'
 }
 
 export interface DecisionRecord {

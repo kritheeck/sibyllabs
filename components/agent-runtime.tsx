@@ -14,19 +14,24 @@ import {
   type ActivityEvent,
   type AgentState,
 } from '@/lib/memory-data'
+import { type MemoryRecord } from '@/lib/memory-data'
 import { useMemoryGraph } from '@/lib/memory-context'
-import { searchMemories, type MemorySearchResponse } from '@/lib/memory-client'
 import { useReducedMotion } from '@/hooks/use-reduced-motion'
 
 interface AgentRuntimeValue {
   state: AgentState
-  /** Memory ids currently being recalled — drives graph highlighting. */
   activeMemoryIds: string[]
   activity: ActivityEvent[]
   selectedId: string | null
   select: (id: string | null) => void
-  /** Simulates a user query running through the recall → reason → decide loop. */
-  runQuery: (query: string) => void
+  runQuery: (query: string) => Promise<void>
+  lastDecision: {
+    action: string
+    reason: string
+    memories: MemoryRecord[]
+    constraintHit?: string
+    confidence: number
+  } | null
   lastQuery: string | null
   reducedMotion: boolean
 }
@@ -101,6 +106,13 @@ export function AgentRuntimeProvider({ children }: { children: React.ReactNode }
   const [activity, setActivity] = useState<ActivityEvent[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [lastQuery, setLastQuery] = useState<string | null>(null)
+  const [lastDecision, setLastDecision] = useState<{
+    action: string
+    reason: string
+    memories: MemoryRecord[]
+    constraintHit?: string
+    confidence: number
+  } | null>(null)
   const queryRunning = useRef(false)
   const timers = useRef<ReturnType<typeof setTimeout>[]>([])
   const seq = useRef(0)
@@ -166,6 +178,7 @@ export function AgentRuntimeProvider({ children }: { children: React.ReactNode }
       const trimmed = query.trim()
       if (!trimmed) return
       setLastQuery(trimmed)
+      setLastDecision(null)
       clearTimers()
       queryRunning.current = true
 
@@ -181,12 +194,37 @@ export function AgentRuntimeProvider({ children }: { children: React.ReactNode }
 
       const done = setTimeout(async () => {
         try {
-          const result = await search(trimmed, 20)
-          if (result.memories.length > 0) {
-            setActiveMemoryIds(result.memories.map((m) => m.id))
+          const res = await fetch('/api/agent/run', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            cache: 'no-store',
+            body: JSON.stringify({ query: trimmed }),
+          })
+          if (!res.ok) {
+            throw new Error(`Agent run failed: ${res.status}`)
           }
+          const result = await res.json()
+          const memories: MemoryRecord[] = Array.isArray(result.memories) ? result.memories : []
+          const decision = result.decision ?? null
+          setLastDecision(decision)
+          const memoryIds = memories.map((m) => m.id).filter((id): id is string => Boolean(id))
+          if (memoryIds.length > 0) {
+            setActiveMemoryIds(memoryIds)
+          }
+          const tone =
+            decision?.action === 'BLOCK'
+              ? 'critical'
+              : decision?.action === 'REVIEW'
+                ? 'warning'
+                : 'default'
+          pushEvent({
+            kind: decision?.action === 'BLOCK' ? 'CONSTRAINT EVALUATED' : 'DECISION',
+            detail: decision?.reason ?? 'Agent completed',
+            memoryIds,
+            tone,
+          })
         } catch {
-          // keep current activeMemoryIds on search failure
+          // keep current activeMemoryIds on agent failure
         } finally {
           queryRunning.current = false
           setState('LISTENING')
@@ -194,7 +232,7 @@ export function AgentRuntimeProvider({ children }: { children: React.ReactNode }
       }, elapsed + 400)
       timers.current.push(done)
     },
-    [clearTimers, pushEvent, reducedMotion, search],
+    [clearTimers, pushEvent, reducedMotion],
   )
 
   useEffect(() => clearTimers, [clearTimers])
@@ -214,10 +252,11 @@ export function AgentRuntimeProvider({ children }: { children: React.ReactNode }
       selectedId,
       select: setSelectedId,
       runQuery,
+      lastDecision,
       lastQuery,
       reducedMotion,
     }),
-    [state, activeMemoryIds, activity, selectedId, runQuery, lastQuery, reducedMotion],
+    [state, activeMemoryIds, activity, selectedId, runQuery, lastDecision, lastQuery, reducedMotion],
   )
 
   return <AgentRuntimeContext.Provider value={value}>{children}</AgentRuntimeContext.Provider>

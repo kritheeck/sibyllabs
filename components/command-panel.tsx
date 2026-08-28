@@ -3,7 +3,7 @@
 import dynamic from 'next/dynamic'
 import { useEffect, useRef, useState, type RefObject } from 'react'
 import { AnimatePresence, motion, type MotionValue } from 'motion/react'
-import { AGENT, type AgentState } from '@/lib/memory-data'
+import { AGENT, type AgentState, type MemoryRecord } from '@/lib/memory-data'
 import { AgentStatus } from './agent-status'
 import { CommandRail } from './command-rail'
 import { MemoryGraph2D } from './memory-graph-2d'
@@ -27,9 +27,9 @@ function GraphSkeleton() {
 }
 
 const SUGGESTIONS = [
-  'Should we deploy Atlas today?',
-  'What went wrong in incident #12?',
-  'Which constraints block the release?',
+  'Deploy production release',
+  'What constraints block this?',
+  'Why did we choose Supabase?',
 ]
 
 interface CommandPanelProps {
@@ -37,11 +37,18 @@ interface CommandPanelProps {
   selectedId: string | null
   activeIds: string[]
   onSelect: (id: string) => void
-  onSubmit: (query: string) => void
+  onSubmit: (query: string) => Promise<void>
   reducedMotion: boolean
   stageProgress?: MotionValue<number>
   active?: boolean
   recallAnchorRef?: RefObject<HTMLElement | null>
+  lastDecision?: {
+    action: string
+    reason: string
+    memories: MemoryRecord[]
+    constraintHit?: string
+    confidence: number
+  } | null
 }
 
 export function CommandPanel({
@@ -54,6 +61,7 @@ export function CommandPanel({
   stageProgress,
   active = false,
   recallAnchorRef,
+  lastDecision,
 }: CommandPanelProps) {
   const { nodes } = useMemoryGraph()
   const [value, setValue] = useState('')
@@ -168,6 +176,15 @@ export function CommandPanel({
               onSelect={onSelect}
               reducedMotion={reducedMotion}
             />
+          )}
+          {lastDecision && (
+            <div className="pointer-events-none absolute bottom-16 left-5 right-5 flex justify-center">
+              <div className="pointer-events-auto max-w-xl rounded-sm border border-border bg-surface/90 px-4 py-3 backdrop-blur">
+                <p className="type-label text-muted-foreground/70">AGENT DECISION</p>
+                <p className="mt-1 text-sm font-medium text-foreground">{lastDecision.action}</p>
+                <p className="mt-1 text-xs text-muted-foreground">{lastDecision.reason}</p>
+              </div>
+            </div>
           )}
         </div>
 

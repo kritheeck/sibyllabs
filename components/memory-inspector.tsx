@@ -25,6 +25,8 @@ const MEMORY_FRAME_TONE: Record<MemoryRecord['type'], FrameTone> = {
   LESSON: 'success',
   EVENT: 'primary',
   ACTION: 'secondary',
+  FACT: 'primary',
+  OUTCOME: 'success',
 }
 
 function ConfidenceMeter({

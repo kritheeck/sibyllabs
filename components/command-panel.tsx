@@ -9,6 +9,8 @@ import { CommandRail } from './command-rail'
 import { MemoryGraph2D } from './memory-graph-2d'
 import { StageShell } from './stage-shell'
 import { useMemoryGraph } from '@/lib/memory-context'
+import { useAgentRuntime } from './agent-runtime'
+import { Sparkles, Database } from 'lucide-react'
 
 const MemoryGraph = dynamic(() => import('./memory-graph').then((module) => module.MemoryGraph), {
   ssr: false,
@@ -27,6 +29,7 @@ function GraphSkeleton() {
 }
 
 const SUGGESTIONS = [
+  'What database are we using for Atlas?',
   'Deploy production release',
   'What constraints block this?',
   'Why did we choose Supabase?',
@@ -63,11 +66,13 @@ export function CommandPanel({
   recallAnchorRef,
   lastDecision,
 }: CommandPanelProps) {
-  const { nodes } = useMemoryGraph()
+  const { nodes, edges } = useMemoryGraph()
+  const { messages, resetSession } = useAgentRuntime()
   const [value, setValue] = useState('')
   const [focused, setFocused] = useState(false)
   const [is3D, setIs3D] = useState(true)
   const inputRef = useRef<HTMLInputElement>(null)
+  const messagesEndRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     const mediaQuery = window.matchMedia('(min-width: 768px)')
@@ -87,6 +92,12 @@ export function CommandPanel({
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [])
+
+  useEffect(() => {
+    if (messages.length > 0) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+    }
+  }, [messages.length])
 
   const submit = () => {
     const query = value.trim()
@@ -143,6 +154,7 @@ export function CommandPanel({
           </div>
         </div>
 
+        {/* 3D Brain Core Constellation Canvas */}
         <div className="relative h-[clamp(360px,52vh,640px)] overflow-hidden bg-black/10 xl:h-[clamp(580px,61vh,660px)]">
           {is3D ? (
             <div className="relative h-full">
@@ -162,7 +174,7 @@ export function CommandPanel({
               />
               <div className="pointer-events-none absolute top-4 right-5 flex flex-col items-end gap-1">
                 <span className="type-label text-muted-foreground/55">MEMORY CONSTELLATION</span>
-                <span className="type-label text-muted-foreground/38">{nodes.length} NODES · 22 EDGES</span>
+                <span className="type-label text-muted-foreground/38">{nodes.length} NODES · {edges.length} EDGES</span>
               </div>
               <div className="pointer-events-none absolute bottom-4 right-5 hidden items-center gap-2 font-mono text-[9px] tracking-[0.16em] text-muted-foreground/35 sm:flex">
                 <span className="size-1 rounded-full bg-primary/60" />
@@ -177,6 +189,7 @@ export function CommandPanel({
               reducedMotion={reducedMotion}
             />
           )}
+
           {lastDecision && (
             <div className="pointer-events-none absolute bottom-16 left-5 right-5 flex justify-center">
               <div className="pointer-events-auto max-w-xl rounded-sm border border-border bg-surface/90 px-4 py-3 backdrop-blur">
@@ -187,6 +200,79 @@ export function CommandPanel({
             </div>
           )}
         </div>
+
+        {/* Persistent Chat Log Thread (When messages exist in current session) */}
+        {messages.length > 0 && (
+          <div className="max-h-72 overflow-y-auto border-t border-border/80 bg-black/40 px-5 py-4 backdrop-blur-md">
+            <div className="mb-2 flex items-center justify-between border-b border-border/40 pb-2">
+              <div className="flex items-center gap-2 text-[10px] font-mono tracking-wider text-muted-foreground/70">
+                <Database className="size-3 text-primary" />
+                <span>ACTIVE SESSION CHAT · SIBYL MEMORY BACKED</span>
+              </div>
+              <button
+                type="button"
+                onClick={resetSession}
+                className="text-[9px] font-mono text-muted-foreground/60 hover:text-primary transition-colors underline cursor-pointer"
+              >
+                Clear / New Session
+              </button>
+            </div>
+
+            <div className="space-y-3.5 pt-1">
+              {messages.map((msg) => (
+                <div
+                  key={msg.id}
+                  className={`flex flex-col gap-1.5 ${
+                    msg.role === 'user' ? 'items-end' : 'items-start'
+                  }`}
+                >
+                  <div
+                    className={`max-w-[85%] rounded-sm px-3.5 py-2.5 text-xs ${
+                      msg.role === 'user'
+                        ? 'border border-primary/40 bg-primary/10 text-foreground font-medium'
+                        : 'border border-border bg-surface-stage/90 text-foreground/90'
+                    }`}
+                  >
+                    <p className="leading-relaxed whitespace-pre-wrap">{msg.text}</p>
+
+                    {/* Recalled Memory Badges */}
+                    {msg.recalledMemories && msg.recalledMemories.length > 0 && (
+                      <div className="mt-2.5 flex flex-wrap gap-1.5 border-t border-border/50 pt-2">
+                        {msg.recalledMemories.map((rm, i) => (
+                          <span
+                            key={i}
+                            className="inline-flex items-center gap-1 rounded-[2px] border border-primary/40 bg-primary/[0.08] px-1.5 py-0.5 font-mono text-[9px] tracking-wider text-primary"
+                          >
+                            <Sparkles className="size-2.5" />
+                            RECALLED: {rm.label || rm.name} [{rm.category}]
+                          </span>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Newly Stored Memory Badges */}
+                    {msg.storedMemories && msg.storedMemories.length > 0 && (
+                      <div className="mt-2.5 flex flex-wrap gap-1.5 border-t border-border/50 pt-2">
+                        {msg.storedMemories.map((sm, i) => (
+                          <span
+                            key={i}
+                            className="inline-flex items-center gap-1 rounded-[2px] border border-success/40 bg-success/[0.08] px-1.5 py-0.5 font-mono text-[9px] tracking-wider text-success"
+                          >
+                            ✦ SAVED TO SIBYL: {sm.label || sm.name} [{sm.category}]
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <span className="font-mono text-[8px] tracking-wider text-muted-foreground/45 px-1">
+                    {msg.timestamp}
+                  </span>
+                </div>
+              ))}
+              <div ref={messagesEndRef} />
+            </div>
+          </div>
+        )}
 
         <CommandRail
           value={value}
@@ -202,6 +288,8 @@ export function CommandPanel({
           active={coreIsActive}
           stageProgress={stageProgress}
           anchorRef={recallAnchorRef}
+          onResetSession={resetSession}
+          hasMessages={messages.length > 0}
         />
       </div>
     </StageShell>

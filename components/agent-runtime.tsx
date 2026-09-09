@@ -17,14 +17,34 @@ import {
 import { type MemoryRecord } from '@/lib/memory-data'
 import { useMemoryGraph } from '@/lib/memory-context'
 import { useReducedMotion } from '@/hooks/use-reduced-motion'
+import { rememberMemory } from '@/lib/memory-client'
+
+export interface ChatMessage {
+  id: string
+  role: 'user' | 'assistant'
+  text: string
+  recalledMemories?: Array<{ category: string; label: string; name: string }>
+  storedMemories?: Array<{ category: string; label: string; name: string }>
+  timestamp: string
+}
 
 interface AgentRuntimeValue {
+  sessionId: string
   state: AgentState
   activeMemoryIds: string[]
   activity: ActivityEvent[]
   selectedId: string | null
   select: (id: string | null) => void
   runQuery: (query: string) => Promise<void>
+  resetSession: () => void
+  messages: ChatMessage[]
+  rememberMemory: (input: {
+    category?: string
+    name: string
+    label?: string
+    reason?: string
+    confidence?: number
+  }) => Promise<void>
   lastDecision: {
     action: string
     reason: string
@@ -53,41 +73,34 @@ const QUERY_SEQUENCE: { state: AgentState; hold: number; event?: Omit<ActivityEv
   [
     {
       state: 'LISTENING',
-      hold: 700,
-      event: { kind: 'MEMORY RECALLED', detail: 'Query embedded, index scanned' },
+      hold: 500,
+      event: { kind: 'MEMORY RECALLED', detail: 'Query embedded, Sibyl index scanned' },
     },
     {
       state: 'RECALLING',
-      hold: 1500,
+      hold: 1000,
       event: {
         kind: 'MEMORY RECALLED',
-        detail: '3 relevant memories found',
-        memoryIds: ['dec-17', 'con-backup', 'inc-12'],
+        detail: 'Relevant persistent memories retrieved from Sibyl MCP',
       },
     },
     {
       state: 'REASONING',
-      hold: 1700,
+      hold: 1100,
       event: {
         kind: 'CONSTRAINT EVALUATED',
-        detail: 'Friday deployment policy',
-        memoryIds: ['dec-17'],
+        detail: 'Context evaluated against active operational policies',
       },
-    },
-    {
-      state: 'REASONING',
-      hold: 1400,
-      event: { kind: 'REASONING', detail: 'Deployment risk assessment' },
     },
     {
       state: 'EXECUTING',
-      hold: 1300,
-      event: { kind: 'DECISION', detail: 'Deployment blocked', tone: 'critical' },
+      hold: 800,
+      event: { kind: 'DECISION', detail: 'Operational response dispatched', tone: 'default' },
     },
     {
       state: 'SUCCESS',
-      hold: 2200,
-      event: { kind: 'MEMORY UPDATED', detail: 'Outcome stored', tone: 'success' },
+      hold: 1400,
+      event: { kind: 'MEMORY UPDATED', detail: 'Persistent memory synchronized', tone: 'success' },
     },
   ]
 
@@ -100,12 +113,14 @@ function clockLabel(offsetSeconds = 0) {
 
 export function AgentRuntimeProvider({ children }: { children: React.ReactNode }) {
   const reducedMotion = useReducedMotion()
-  const { nodes, loading, error, search } = useMemoryGraph()
-  const [state, setState] = useState<AgentState>('RECALLING')
+  const { nodes, loading, refresh } = useMemoryGraph()
+  const [state, setState] = useState<AgentState>('LISTENING')
   const [activeMemoryIds, setActiveMemoryIds] = useState<string[]>([])
   const [activity, setActivity] = useState<ActivityEvent[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [sessionId, setSessionId] = useState<string>(() => `session-${Date.now()}`)
   const [lastQuery, setLastQuery] = useState<string | null>(null)
+  const [messages, setMessages] = useState<ChatMessage[]>([])
   const [lastDecision, setLastDecision] = useState<{
     action: string
     reason: string
@@ -129,6 +144,53 @@ export function AgentRuntimeProvider({ children }: { children: React.ReactNode }
     if (event.memoryIds?.length) setActiveMemoryIds(event.memoryIds)
   }, [])
 
+  const resetSession = useCallback(() => {
+    clearTimers()
+    const newSessionId = `session-${Date.now()}`
+    setSessionId(newSessionId)
+    setState('LISTENING')
+    setActiveMemoryIds([])
+    setActivity([])
+    setSelectedId(null)
+    setLastQuery(null)
+    setLastDecision(null)
+    setMessages([])
+    queryRunning.current = false
+    refresh()
+    pushEvent({
+      kind: 'MEMORY RECALLED',
+      detail: `New Session initialized (${newSessionId.slice(0, 15)}...). Authoritative Sibyl memory retained.`,
+    })
+  }, [clearTimers, pushEvent, refresh])
+
+  const handleRememberMemory = useCallback(
+    async (input: {
+      category?: string
+      name: string
+      label?: string
+      reason?: string
+      confidence?: number
+    }) => {
+      try {
+        await rememberMemory(input)
+        await refresh()
+        pushEvent({
+          kind: 'MEMORY UPDATED',
+          detail: `Remembered ${input.name}`,
+          tone: 'success',
+        })
+      } catch (err) {
+        console.error('Failed to remember memory:', err)
+        pushEvent({
+          kind: 'MEMORY UPDATED',
+          detail: `Failed to remember ${input.name}`,
+          tone: 'critical',
+        })
+      }
+    },
+    [pushEvent, refresh],
+  )
+
   /* ---------------------------------------------------- ambient behaviour */
   useEffect(() => {
     if (reducedMotion) {
@@ -149,7 +211,7 @@ export function AgentRuntimeProvider({ children }: { children: React.ReactNode }
       index += 1
       t = setTimeout(tick, step.hold)
     }
-    t = setTimeout(tick, 2400)
+    t = setTimeout(tick, 4000)
     return () => {
       cancelled = true
       clearTimeout(t)
@@ -168,7 +230,7 @@ export function AgentRuntimeProvider({ children }: { children: React.ReactNode }
         : event
       pushEvent(enriched)
       i += 1
-    }, 7000)
+    }, 9000)
     return () => clearInterval(interval)
   }, [pushEvent, reducedMotion, nodes])
 
@@ -182,6 +244,15 @@ export function AgentRuntimeProvider({ children }: { children: React.ReactNode }
       clearTimers()
       queryRunning.current = true
 
+      // Add user message to session chat log
+      const userMessage: ChatMessage = {
+        id: `usr-${Date.now()}`,
+        role: 'user',
+        text: trimmed,
+        timestamp: clockLabel(),
+      }
+      setMessages((prev) => [...prev, userMessage])
+
       let elapsed = 0
       QUERY_SEQUENCE.forEach((step) => {
         const timer = setTimeout(() => {
@@ -189,7 +260,7 @@ export function AgentRuntimeProvider({ children }: { children: React.ReactNode }
           if (step.event) pushEvent(step.event)
         }, elapsed)
         timers.current.push(timer)
-        elapsed += reducedMotion ? Math.min(step.hold, 220) : step.hold
+        elapsed += reducedMotion ? Math.min(step.hold, 150) : step.hold
       })
 
       const done = setTimeout(async () => {
@@ -198,7 +269,7 @@ export function AgentRuntimeProvider({ children }: { children: React.ReactNode }
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             cache: 'no-store',
-            body: JSON.stringify({ query: trimmed }),
+            body: JSON.stringify({ query: trimmed, sessionId }),
           })
           if (!res.ok) {
             throw new Error(`Agent run failed: ${res.status}`)
@@ -207,10 +278,28 @@ export function AgentRuntimeProvider({ children }: { children: React.ReactNode }
           const memories: MemoryRecord[] = Array.isArray(result.memories) ? result.memories : []
           const decision = result.decision ?? null
           setLastDecision(decision)
+
           const memoryIds = memories.map((m) => m.id).filter((id): id is string => Boolean(id))
           if (memoryIds.length > 0) {
             setActiveMemoryIds(memoryIds)
           }
+
+          // Add assistant message to session chat log
+          const assistantMessage: ChatMessage = {
+            id: `ast-${Date.now()}`,
+            role: 'assistant',
+            text: result.reply || decision?.reason || 'Operational memory processed.',
+            recalledMemories: Array.isArray(result.recalledMemories) ? result.recalledMemories : undefined,
+            storedMemories: Array.isArray(result.storedMemories) ? result.storedMemories : undefined,
+            timestamp: clockLabel(),
+          }
+          setMessages((prev) => [...prev, assistantMessage])
+
+          // Refresh memory graph if new memories were written
+          if (Array.isArray(result.storedMemories) && result.storedMemories.length > 0) {
+            refresh()
+          }
+
           const tone =
             decision?.action === 'BLOCK'
               ? 'critical'
@@ -223,16 +312,23 @@ export function AgentRuntimeProvider({ children }: { children: React.ReactNode }
             memoryIds,
             tone,
           })
-        } catch {
-          // keep current activeMemoryIds on agent failure
+        } catch (err) {
+          console.error('Agent query execution error:', err)
+          const errorMessage: ChatMessage = {
+            id: `err-${Date.now()}`,
+            role: 'assistant',
+            text: 'Encountered transient error querying memory layer. Please retry.',
+            timestamp: clockLabel(),
+          }
+          setMessages((prev) => [...prev, errorMessage])
         } finally {
           queryRunning.current = false
           setState('LISTENING')
         }
-      }, elapsed + 400)
+      }, elapsed + 200)
       timers.current.push(done)
     },
-    [clearTimers, pushEvent, reducedMotion],
+    [clearTimers, pushEvent, reducedMotion, refresh, sessionId],
   )
 
   useEffect(() => clearTimers, [clearTimers])
@@ -246,17 +342,21 @@ export function AgentRuntimeProvider({ children }: { children: React.ReactNode }
 
   const value = useMemo<AgentRuntimeValue>(
     () => ({
+      sessionId,
       state,
       activeMemoryIds,
       activity,
       selectedId,
       select: setSelectedId,
       runQuery,
+      resetSession,
+      messages,
+      rememberMemory: handleRememberMemory,
       lastDecision,
       lastQuery,
       reducedMotion,
     }),
-    [state, activeMemoryIds, activity, selectedId, runQuery, lastDecision, lastQuery, reducedMotion],
+    [sessionId, state, activeMemoryIds, activity, selectedId, runQuery, resetSession, messages, handleRememberMemory, lastDecision, lastQuery, reducedMotion],
   )
 
   return <AgentRuntimeContext.Provider value={value}>{children}</AgentRuntimeContext.Provider>

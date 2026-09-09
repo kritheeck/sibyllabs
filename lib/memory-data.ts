@@ -18,6 +18,8 @@ export type MemoryType =
   | 'LESSON'
   | 'EVENT'
   | 'ACTION'
+  | 'FACT'
+  | 'OUTCOME'
 
 export type Importance = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW'
 
@@ -485,4 +487,6 @@ export const TYPE_META: Record<
   LESSON: { color: 'var(--success)', hex: '#4fd8b0', short: 'LES' },
   EVENT: { color: 'var(--primary)', hex: '#5fb3d4', short: 'EVT' },
   ACTION: { color: 'var(--secondary)', hex: '#8ea2f5', short: 'ACT' },
+  FACT: { color: 'var(--primary)', hex: '#38bdf8', short: 'FCT' },
+  OUTCOME: { color: 'var(--success)', hex: '#34d399', short: 'OUT' },
 }

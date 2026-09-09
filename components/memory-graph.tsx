@@ -282,7 +282,7 @@ export function MemoryGraph({
   const renderOverlay = () => {
     if (error) {
       return (
-        <div className="absolute inset-0 grid place-items-center bg-surface-stage">
+        <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center">
           <div className="flex flex-col items-center gap-3">
             <p className="type-label text-muted-foreground/70">MEMORY LAYER UNAVAILABLE</p>
             <p className="font-mono text-[10px] tracking-[0.14em] text-muted-foreground/50">{error}</p>
@@ -292,7 +292,7 @@ export function MemoryGraph({
     }
     if (!loading && nodes.length === 0) {
       return (
-        <div className="absolute inset-0 grid place-items-center bg-surface-stage">
+        <div className="pointer-events-none absolute inset-0 z-10 grid place-items-center">
           <div className="flex flex-col items-center gap-3">
             <p className="type-label text-muted-foreground/70">NO MEMORIES STORED</p>
             <p className="font-mono text-[10px] tracking-[0.14em] text-muted-foreground/50">

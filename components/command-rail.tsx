@@ -1,7 +1,7 @@
 'use client'
 
 import type { RefObject } from 'react'
-import { ArrowUp, Mic } from 'lucide-react'
+import { ArrowUp, Mic, RotateCcw } from 'lucide-react'
 import { motion, useMotionValue, type MotionValue } from 'motion/react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -22,6 +22,8 @@ interface CommandRailProps {
   active?: boolean
   stageProgress?: MotionValue<number>
   anchorRef?: RefObject<HTMLElement | null>
+  onResetSession?: () => void
+  hasMessages?: boolean
 }
 
 export function CommandRail({
@@ -38,6 +40,8 @@ export function CommandRail({
   active = false,
   stageProgress,
   anchorRef,
+  onResetSession,
+  hasMessages = false,
 }: CommandRailProps) {
   const fallbackProgress = useMotionValue(1)
   const frameProgress = stageProgress ?? fallbackProgress
@@ -49,7 +53,21 @@ export function CommandRail({
 
       <div className="px-4 py-4 sm:px-5">
         <div className="mb-2 flex items-center justify-between gap-3">
-          <TechnicalLabel tone={focused || active ? 'primary' : 'neutral'}>QUERY MEMORY LAYER</TechnicalLabel>
+          <div className="flex items-center gap-2">
+            <TechnicalLabel tone={focused || active ? 'primary' : 'neutral'}>QUERY MEMORY LAYER</TechnicalLabel>
+            {onResetSession && hasMessages && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={onResetSession}
+                className="h-6 gap-1 px-2 font-mono text-[9px] tracking-wider text-muted-foreground hover:text-foreground border border-border/60 hover:border-primary/40 rounded-none"
+              >
+                <RotateCcw className="size-3" />
+                NEW SESSION
+              </Button>
+            )}
+          </div>
           {recalling && (
             <motion.span
               initial={{ opacity: 0, y: 3 }}
@@ -78,7 +96,7 @@ export function CommandRail({
             onChange={(event) => onChange(event.target.value)}
             onFocus={() => onFocusChange(true)}
             onBlur={() => onFocusChange(false)}
-            placeholder="Ask MEMORYOS anything..."
+            placeholder="Ask MEMORYOS anything... (e.g. What database are we using for Atlas?)"
             aria-label="Ask MEMORYOS anything"
             className="h-10 min-w-0 flex-1 rounded-none border-0 bg-transparent px-1 text-[13px] text-foreground shadow-none placeholder:text-muted-foreground/55 focus-visible:border-0 focus-visible:ring-0"
           />

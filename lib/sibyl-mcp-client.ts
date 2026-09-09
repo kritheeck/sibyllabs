@@ -36,7 +36,7 @@ export class SibylMCPClient {
   private async ensureInitialized(): Promise<void> {
     if (this.initialized) return
 
-    this.proc = spawn(SIBYL_MCP_PATH, [], {
+    this.proc = spawn(/*turbopackIgnore: true*/ SIBYL_MCP_PATH, [], {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
     })

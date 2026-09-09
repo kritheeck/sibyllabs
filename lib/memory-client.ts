@@ -35,6 +35,35 @@ export async function fetchMemoryGraph(): Promise<MemoryGraph> {
   return { nodes: data.nodes ?? [], edges: data.edges ?? [] }
 }
 
+export interface RememberMemoryRequest {
+  category?: string
+  name: string
+  label?: string
+  reason?: string
+  confidence?: number
+}
+
+export interface RememberMemoryResponse {
+  ok: boolean
+  name: string
+  category: string
+}
+
+export async function rememberMemory(
+  input: RememberMemoryRequest,
+): Promise<RememberMemoryResponse> {
+  const res = await fetch('/api/memory/remember', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    cache: 'no-store',
+    body: JSON.stringify(input),
+  })
+  if (!res.ok) {
+    throw new Error(`Failed to remember memory: ${res.status}`)
+  }
+  return (await res.json()) as RememberMemoryResponse
+}
+
 export async function searchMemories(
   query: string,
   limit = 20,

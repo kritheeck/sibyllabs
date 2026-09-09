@@ -65,6 +65,11 @@ export async function GET() {
       }
     }
 
+    if (entities.length === 0) {
+      const { MEMORY_NODES, MEMORY_EDGES } = await import('@/lib/memory-data')
+      return NextResponse.json({ nodes: MEMORY_NODES, edges: MEMORY_EDGES, count: MEMORY_NODES.length })
+    }
+
     // Count entities by category for cluster spacing
     const categoryCounts: Record<string, number> = {}
     for (const e of entities) {

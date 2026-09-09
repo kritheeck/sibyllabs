@@ -1,6 +1,6 @@
 'use client'
 
-import { type MemoryRecord, type MemoryEdge } from './memory-data'
+import { type MemoryRecord, type MemoryEdge, MEMORY_NODES, MEMORY_EDGES } from './memory-data'
 import { fetchMemoryGraph, searchMemories, type MemorySearchResponse } from './memory-client'
 import { createContext, useContext, useEffect, useMemo, useState } from 'react'
 
@@ -17,8 +17,8 @@ interface MemoryGraphContextValue {
 const MemoryGraphContext = createContext<MemoryGraphContextValue | null>(null)
 
 export function MemoryGraphProvider({ children }: { children: React.ReactNode }) {
-  const [nodes, setNodes] = useState<MemoryRecord[]>([])
-  const [edges, setEdges] = useState<MemoryEdge[]>([])
+  const [nodes, setNodes] = useState<MemoryRecord[]>(() => MEMORY_NODES)
+  const [edges, setEdges] = useState<MemoryEdge[]>(() => MEMORY_EDGES)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -27,12 +27,14 @@ export function MemoryGraphProvider({ children }: { children: React.ReactNode })
     setError(null)
     try {
       const data = await fetchMemoryGraph()
-      setNodes(data.nodes)
-      setEdges(data.edges)
+      if (Array.isArray(data.nodes) && data.nodes.length > 0) {
+        setNodes(data.nodes)
+        setEdges(Array.isArray(data.edges) ? data.edges : [])
+      }
     } catch (e) {
+      console.warn('Failed to refresh live memory graph from backend:', e)
+      // Retain existing populated nodes instead of wiping out the 3D field
       setError(e instanceof Error ? e.message : 'Failed to load memory graph')
-      setNodes([])
-      setEdges([])
     } finally {
       setLoading(false)
     }

@@ -7,7 +7,7 @@ const SIBYL_MCP_PATH =
 
 type JsonRpcRequest = {
   jsonrpc: '2.0'
-  id: number | string
+  id?: number | string
   method: string
   params?: Record<string, unknown>
 }
@@ -74,7 +74,7 @@ export class SibylMCPClient {
       throw new Error('Invalid initialize response from Sibyl MCP server')
     }
 
-    await this.send('notifications/initialized', undefined, true)
+    await this.send('notifications/initialized', {}, true)
     this.initialized = true
   }
 
@@ -111,9 +111,9 @@ export class SibylMCPClient {
       const id = notification ? undefined : this.nextId++
       const payload: JsonRpcRequest = {
         jsonrpc: '2.0',
-        id: id ?? uuid(),
+        ...(notification ? {} : { id: id ?? uuid() }),
         method,
-        ...(params != null ? { params } : {}),
+        params: params ?? {},
       }
 
       if (!notification && id != null) {

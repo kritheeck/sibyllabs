@@ -1,9 +1,21 @@
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import fs from 'node:fs'
 
-const SIBYL_MCP_PATH =
-  process.env.SIBYL_MCP_PATH ??
-  'C:\\Users\\Kritheeck\\AppData\\Local\\Programs\\Python\\Python312\\Scripts\\sibyl-memory-mcp.exe'
+function getMcpSpawnTarget(): { command: string; args: string[] } {
+  if (process.env.SIBYL_MCP_COMMAND) {
+    const parts = process.env.SIBYL_MCP_COMMAND.trim().split(/\s+/)
+    return { command: parts[0], args: parts.slice(1) }
+  }
+  if (process.env.SIBYL_MCP_PATH && fs.existsSync(process.env.SIBYL_MCP_PATH)) {
+    return { command: process.env.SIBYL_MCP_PATH, args: [] }
+  }
+  if (process.platform === 'win32') {
+    const wslBin = process.env.SIBYL_WSL_BIN ?? '/home/kritheeck/.sibyl-venv/bin/sibyl-memory-mcp'
+    return { command: 'wsl', args: ['-e', wslBin] }
+  }
+  return { command: 'sibyl-memory-mcp', args: [] }
+}
 
 type JsonRpcRequest = {
   jsonrpc: '2.0'
@@ -14,7 +26,7 @@ type JsonRpcRequest = {
 
 type JsonRpcResponse = {
   jsonrpc: '2.0'
-  id: number | string
+  id?: number | string
   result?: unknown
   error?: { code: number; message: string; data?: unknown }
 }
@@ -28,54 +40,93 @@ export class SibylMCPClient {
   private buffer = ''
   private pending = new Map<
     number | string,
-    { resolve: (value: unknown) => void; reject: (err: Error) => void }
+    { resolve: (value: unknown) => void; reject: (err: Error) => void; timer?: NodeJS.Timeout }
   >()
   private nextId = 1
   private initialized = false
+  private initPromise: Promise<void> | null = null
 
   private async ensureInitialized(): Promise<void> {
-    if (this.initialized) return
+    if (this.initialized && this.proc && !this.proc.killed) return
+    if (this.initPromise) return this.initPromise
 
-    this.proc = spawn(/*turbopackIgnore: true*/ SIBYL_MCP_PATH, [], {
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
-    })
+    this.initPromise = (async () => {
+      const target = getMcpSpawnTarget()
+      console.log(`[SibylMCPClient] Spawning Sibyl MCP server: ${target.command} ${target.args.join(' ')}`)
 
-    const proc = this.proc
-    if (proc.stdout == null || proc.stderr == null || proc.stdin == null) {
-      throw new Error('Failed to open stdio for Sibyl MCP server')
-    }
+      this.proc = spawn(/*turbopackIgnore: true*/ target.command, target.args, {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+      })
 
-    proc.stdout.setEncoding('utf-8')
-    proc.stdout.on('data', (chunk: string) => {
-      this.buffer += chunk
-      this.drainBuffer()
-    })
+      const proc = this.proc
+      if (proc.stdout == null || proc.stderr == null || proc.stdin == null) {
+        throw new Error('Failed to open stdio for Sibyl MCP server')
+      }
 
-    proc.stderr.on('data', (chunk: Buffer) => {
-      console.error('[sibyl-mcp stderr]', chunk.toString())
-    })
+      proc.stdout.setEncoding('utf-8')
+      proc.stdout.on('data', (chunk: string) => {
+        this.buffer += chunk
+        this.drainBuffer()
+      })
 
-    proc.on('error', (err) => {
-      console.error('[sibyl-mcp error]', err)
-    })
+      proc.stderr.on('data', (chunk: Buffer) => {
+        const msg = chunk.toString().trim()
+        if (msg) console.error('[sibyl-mcp stderr]', msg)
+      })
 
-    const initResponse = await this.send('initialize', {
-      protocolVersion: '2024-11-05',
-      capabilities: {},
-      clientInfo: { name: 'memoryos-backend', version: '1.0.0' },
-    })
+      const handleExit = (err?: Error) => {
+        this.initialized = false
+        this.proc = null
+        this.initPromise = null
+        for (const [id, item] of this.pending.entries()) {
+          if (item.timer) clearTimeout(item.timer)
+          item.reject(err || new Error('Sibyl MCP process disconnected'))
+        }
+        this.pending.clear()
+      }
 
-    if (
-      typeof initResponse !== 'object' ||
-      initResponse === null ||
-      !('serverInfo' in initResponse)
-    ) {
-      throw new Error('Invalid initialize response from Sibyl MCP server')
-    }
+      proc.on('error', (err) => {
+        console.error('[sibyl-mcp process error]', err)
+        handleExit(err)
+      })
 
-    await this.send('notifications/initialized', {}, true)
-    this.initialized = true
+      proc.on('close', (code) => {
+        if (code !== 0 && code !== null) {
+          console.warn(`[sibyl-mcp process closed with code ${code}]`)
+        }
+        handleExit()
+      })
+
+      try {
+        const initResponse = await this.send('initialize', {
+          protocolVersion: '2024-11-05',
+          capabilities: {},
+          clientInfo: { name: 'memoryos-backend', version: '1.0.0' },
+        })
+
+        if (
+          typeof initResponse !== 'object' ||
+          initResponse === null ||
+          !('serverInfo' in initResponse)
+        ) {
+          throw new Error('Invalid initialize response from Sibyl MCP server')
+        }
+
+        await this.send('notifications/initialized', {}, true)
+        this.initialized = true
+        console.log('[SibylMCPClient] Sibyl MCP client initialized successfully')
+      } catch (err) {
+        this.initialized = false
+        this.proc?.kill()
+        this.proc = null
+        throw err
+      } finally {
+        this.initPromise = null
+      }
+    })()
+
+    return this.initPromise
   }
 
   private drainBuffer(): void {
@@ -87,13 +138,25 @@ export class SibylMCPClient {
       if (!trimmed) continue
       try {
         const msg = JSON.parse(trimmed) as JsonRpcResponse
-        if (msg.id != null && this.pending.has(msg.id)) {
-          const { resolve, reject } = this.pending.get(msg.id)!
-          this.pending.delete(msg.id)
+        const idKey =
+          msg.id != null
+            ? this.pending.has(msg.id)
+              ? msg.id
+              : this.pending.has(String(msg.id))
+                ? String(msg.id)
+                : this.pending.has(Number(msg.id))
+                  ? Number(msg.id)
+                  : null
+            : null
+
+        if (idKey != null) {
+          const item = this.pending.get(idKey)!
+          this.pending.delete(idKey)
+          if (item.timer) clearTimeout(item.timer)
           if (msg.error) {
-            reject(new Error(`Sibyl MCP error ${msg.error.code}: ${msg.error.message}`))
+            item.reject(new Error(`Sibyl MCP error ${msg.error.code}: ${msg.error.message}`))
           } else {
-            resolve(msg.result)
+            item.resolve(msg.result)
           }
         }
       } catch {
@@ -116,8 +179,15 @@ export class SibylMCPClient {
         params: params ?? {},
       }
 
+      let timer: NodeJS.Timeout | undefined
       if (!notification && id != null) {
-        this.pending.set(id, { resolve, reject })
+        timer = setTimeout(() => {
+          if (this.pending.has(id)) {
+            this.pending.delete(id)
+            reject(new Error(`Sibyl MCP request timed out after 15s (method: ${method})`))
+          }
+        }, 15000)
+        this.pending.set(id, { resolve, reject, timer })
       }
 
       this.proc.stdin.write(JSON.stringify(payload) + '\n', (err) => {
@@ -125,6 +195,7 @@ export class SibylMCPClient {
           if (id != null) {
             this.pending.delete(id)
           }
+          if (timer) clearTimeout(timer)
           reject(err)
         }
       })

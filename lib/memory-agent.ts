@@ -41,14 +41,51 @@ export interface AgentRunResult {
   sessionId?: string
 }
 
+interface ExtractedMemoryItem {
+  category: string
+  name: string
+  label: string
+  reason: string
+  importance?: string
+  tags?: string[]
+}
+
+const ALLOWED_CATEGORIES = new Set([
+  'FACT',
+  'PREFERENCE',
+  'DECISION',
+  'CONSTRAINT',
+  'PROJECT',
+  'EVENT',
+  'INCIDENT',
+  'LESSON',
+  'RELATIONSHIP',
+  'ACTION',
+  'OUTCOME',
+])
+
 export class MemoryAgent {
   private client = getSibylClient()
 
+  private getGeminiModel() {
+    const apiKey = process.env.GEMINI_API_KEY
+    if (!apiKey || !apiKey.trim()) {
+      throw new Error(
+        'Missing required environment variable: GEMINI_API_KEY. ' +
+        'Please configure GEMINI_API_KEY in .env.local. ' +
+        "The implementation expects Gemini model 'gemini-2.5-flash'.",
+      )
+    }
+    const ai = new GoogleGenerativeAI(apiKey.trim())
+    const modelName = process.env.GEMINI_MODEL || 'gemini-2.5-flash'
+    return { ai, modelName, model: ai.getGenerativeModel({ model: modelName }) }
+  }
+
   private coerceMemory(hit: unknown, index: number): AgentMemoryItem {
-    const record = hit as Record<string, unknown>
+    const record = (hit && typeof hit === 'object' ? hit : {}) as Record<string, unknown>
     const body = (record.body && typeof record.body === 'object' ? record.body : {}) as Record<string, unknown>
     const name = typeof record.name === 'string' ? record.name : (typeof record.key === 'string' ? record.key : `entity-${index}`)
-    const category = typeof record.category === 'string' ? record.category : 'FACT'
+    const category = typeof record.category === 'string' ? record.category.toUpperCase() : 'FACT'
     const label = typeof body.label === 'string' && body.label ? body.label : formatHumanLabel(name)
     const ref = typeof body.ref === 'string' && body.ref ? body.ref : `${category} #${index + 1}`
 
@@ -59,51 +96,11 @@ export class MemoryAgent {
       body,
       tier: typeof record.tier === 'string' ? record.tier : 'entity',
       score: typeof record.score === 'number' ? record.score : 0.9,
-      reason: typeof body.reason === 'string' ? body.reason : '',
+      reason: typeof body.reason === 'string' ? body.reason : (typeof body.description === 'string' ? body.description : ''),
       confidence: typeof body.confidence === 'number' ? body.confidence : 0.95,
       createdAt: typeof body.createdAt === 'string' ? body.createdAt : (typeof record.created_at === 'string' ? record.created_at : new Date().toISOString()),
       label,
       ref,
-    }
-  }
-
-  async recall(query: string, limit = 25): Promise<AgentMemoryItem[]> {
-    try {
-      const searchRes = await this.client.searchEntities(query, limit)
-      let hits = this.extractHits(searchRes)
-
-      // Always retrieve stored entities from Sibyl to perform complete cross-session contextual recall
-      const listRes = await this.client.listEntities(undefined, 100)
-      const listHits = this.extractHits(listRes)
-      const seenNames = new Set(hits.map((h: any) => h.name || h.id || h.key))
-      for (const item of listHits as any[]) {
-        const id = item.name || item.id || item.key
-        if (id && !seenNames.has(id)) {
-          hits.push(item)
-          seenNames.add(id)
-        }
-      }
-
-      const all = hits.map((hit, index) => this.coerceMemory(hit, index))
-
-      // Rank by query token match score
-      const queryTokens = query.toLowerCase().split(/\W+/).filter((t) => t.length > 2)
-      const scored = all.map((m) => {
-        const text = `${m.name} ${m.category} ${m.label || ''} ${m.reason || ''} ${JSON.stringify(m.body || {})}`.toLowerCase()
-        let matchCount = 0
-        for (const token of queryTokens) {
-          if (text.includes(token)) {
-            matchCount += token.length > 4 ? 3 : 1
-          }
-        }
-        return { memory: m, score: matchCount }
-      })
-
-      scored.sort((a, b) => b.score - a.score)
-      return scored.map((s) => s.memory)
-    } catch (error) {
-      console.error('Memory recall from Sibyl failed:', error)
-      return []
     }
   }
 
@@ -118,292 +115,410 @@ export class MemoryAgent {
     return []
   }
 
+  /**
+   * Authoritatively recalls relevant memories from Sibyl for the given query.
+   * Only returns memories that have real semantic or lexical relevance.
+   */
+  async recall(query: string, limit = 20): Promise<{ allMemories: AgentMemoryItem[]; relevantMemories: AgentMemoryItem[] }> {
+    try {
+      // 1. Query Sibyl memory search
+      const searchRes = await this.client.searchEntities(query, limit)
+      const searchHits = this.extractHits(searchRes)
+
+      // 2. Query Sibyl memory list to ensure complete cross-session coverage
+      const listRes = await this.client.listEntities(undefined, 100)
+      const listHits = this.extractHits(listRes)
+
+      const mergedHits: unknown[] = [...searchHits]
+      const seenKeys = new Set(searchHits.map((h: any) => h.name || h.key || h.id))
+
+      for (const item of listHits as any[]) {
+        const key = item.name || item.key || item.id
+        if (key && !seenKeys.has(key)) {
+          mergedHits.push(item)
+          seenKeys.add(key)
+        }
+      }
+
+      const allMemories = mergedHits.map((hit, index) => this.coerceMemory(hit, index))
+
+      // 3. Extract query tokens (length >= 3, excluding common stop words)
+      const stopWords = new Set([
+        'what', 'which', 'where', 'when', 'why', 'how', 'who', 'does', 'doing', 'have', 'has',
+        'the', 'and', 'for', 'with', 'about', 'our', 'your', 'from', 'this', 'that', 'should',
+        'could', 'would', 'will', 'can', 'are', 'was', 'were', 'use', 'using', 'used', 'tell',
+      ])
+      const queryTokens = query
+        .toLowerCase()
+        .replace(/[^\w\s]/g, ' ')
+        .split(/\s+/)
+        .filter((t) => t.length >= 3 && !stopWords.has(t))
+
+      if (queryTokens.length === 0) {
+        return { allMemories, relevantMemories: [] }
+      }
+
+      // 4. Score each memory for query relevance
+      const scored = allMemories.map((m) => {
+        const bodyStr = JSON.stringify(m.body || {})
+        const targetText = `${m.name} ${m.category} ${m.label || ''} ${m.reason || ''} ${bodyStr}`.toLowerCase()
+        let matchScore = 0
+
+        for (const token of queryTokens) {
+          if (targetText.includes(token)) {
+            // Give higher weight to matches in name, category, or label
+            if (m.name.toLowerCase().includes(token) || (m.label && m.label.toLowerCase().includes(token))) {
+              matchScore += 5
+            } else if (m.category.toLowerCase().includes(token)) {
+              matchScore += 3
+            } else {
+              matchScore += 1
+            }
+          }
+        }
+
+        return { memory: m, score: matchScore }
+      })
+
+      // Filter to only memories that actually matched the query tokens
+      const matching = scored.filter((s) => s.score > 0)
+      matching.sort((a, b) => b.score - a.score)
+
+      const relevantMemories = matching.slice(0, limit).map((s) => s.memory)
+      return { allMemories, relevantMemories }
+    } catch (error) {
+      console.error('[MemoryAgent] Failed to recall memories from Sibyl:', error)
+      return { allMemories: [], relevantMemories: [] }
+    }
+  }
+
+  /**
+   * Intelligently extracts durable operational memories from user interaction using Gemini,
+   * and persists them authoritatively into Sibyl long-term memory.
+   */
   async extractAndStoreMemories(query: string): Promise<StoredMemorySummary[]> {
-    const stored: StoredMemorySummary[] = []
     const trimmed = query.trim()
     const lower = trimmed.toLowerCase()
 
-    // Question detection: DO NOT treat user questions as statements of facts!
-    const isQuestion =
+    // 1. Guard against storing pure questions, greetings, or ephemeral chitchat
+    const isPureQuestion =
       trimmed.endsWith('?') ||
-      /^(what|which|where|when|why|how|who|is|are|can|could|should|do|does|did|will|would|tell me|show me)\b/i.test(trimmed)
+      /^(what|which|where|when|why|how|who|is|are|can|could|should|do|does|did|will|would|tell me|show me|explain)\b/i.test(trimmed)
 
-    if (isQuestion) {
-      return stored
+    const isEphemeralGreeting =
+      /^(hi|hello|hey|greetings|thanks|thank you|good morning|good evening|good afternoon|ok|okay|bye|farewell)\b/i.test(trimmed) &&
+      trimmed.split(/\s+/).length <= 4
+
+    if (isPureQuestion || isEphemeralGreeting) {
+      return []
     }
 
-    // 1. Project Context Extraction
-    // Examples: "My project is Atlas", "Our project is called Atlas", "Project: Atlas", "Working on Atlas"
-    const projectMatch = query.match(/(?:my project is (?:called )?|working on (?:project )?|project:?\s*)([A-Za-z0-9_\-]+)/i)
-    let extractedProjectName = ''
-    if (projectMatch && projectMatch[1]) {
-      const candidate = projectMatch[1].trim()
-      // Filter out common filler words
-      if (!/^(the|a|an|my|our|this|that|and)$/i.test(candidate)) {
-        extractedProjectName = candidate
-        const slug = `project_${candidate.toLowerCase().replace(/\s+/g, '_')}`
+    const stored: StoredMemorySummary[] = []
+
+    try {
+      const { ai, modelName } = this.getGeminiModel()
+      const extractionModel = ai.getGenerativeModel({
+        model: modelName,
+        generationConfig: { responseMimeType: 'application/json' },
+      })
+
+      const extractionPrompt = `You are the memory extraction engine for MEMORYOS.
+Analyze the following user statement and extract any durable, long-term operational knowledge that should be remembered in Sibyl memory.
+
+Categories to extract:
+- PROJECT: Core project identity, repository, scope, or mission.
+- FACT: Verified architectural, technical, infrastructure, or stack facts.
+- PREFERENCE: Explicit user or team technical/procedural preferences (e.g., deployment style, tooling).
+- DECISION: Definite technical, architectural, or procedural decisions agreed upon.
+- CONSTRAINT: Mandatory rules, limitations, or policies (e.g. no Friday deployments).
+- LESSON: Operational insights or takeaways.
+- INCIDENT: Outages, regressions, or system blockers.
+- ACTION: Significant operational milestones performed.
+- OUTCOME: Concrete results from an action or project phase.
+
+CRITICAL INSTRUCTIONS:
+- If the statement contains NO durable facts, preferences, decisions, constraints, or project context, return an empty JSON array: [].
+- Do not store temporary conversation artifacts or questions.
+- Format 'name' as a lowercase unique identifier with underscores (e.g., 'atlas_tech_stack_supabase', 'deployment_preference_staged', 'friday_deployment_constraint').
+- 'importance' must be one of: CRITICAL, HIGH, MEDIUM, LOW.
+
+USER STATEMENT:
+"${trimmed}"
+
+Respond ONLY with a JSON array conforming to this schema:
+[
+  {
+    "category": "PROJECT" | "FACT" | "PREFERENCE" | "DECISION" | "CONSTRAINT" | "LESSON" | "INCIDENT" | "ACTION" | "OUTCOME",
+    "name": "string",
+    "label": "string",
+    "reason": "string",
+    "importance": "CRITICAL" | "HIGH" | "MEDIUM" | "LOW",
+    "tags": ["string"]
+  }
+]`
+
+      const extractResult = await extractionModel.generateContent(extractionPrompt)
+      const rawJson = extractResult.response.text().trim()
+      let items: ExtractedMemoryItem[] = []
+
+      try {
+        const parsed = JSON.parse(rawJson)
+        if (Array.isArray(parsed)) {
+          items = parsed.filter(
+            (it) =>
+              it &&
+              typeof it === 'object' &&
+              typeof it.category === 'string' &&
+              typeof it.name === 'string' &&
+              typeof it.label === 'string',
+          )
+        }
+      } catch (parseErr) {
+        console.warn('[MemoryAgent] Failed to parse JSON from memory extraction:', parseErr, rawJson)
+      }
+
+      // Persist each extracted memory into Sibyl
+      for (const item of items) {
+        const category = ALLOWED_CATEGORIES.has(item.category.toUpperCase())
+          ? item.category.toUpperCase()
+          : 'FACT'
+        const slug = item.name.toLowerCase().replace(/[^a-z0-9_]/g, '_')
+        const label = item.label.trim()
+        const reason = item.reason || `Extracted from user interaction: "${trimmed}"`
+        const importance = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].includes(item.importance?.toUpperCase() || '')
+          ? item.importance!.toUpperCase()
+          : 'HIGH'
+        const tags = Array.isArray(item.tags) && item.tags.length > 0
+          ? item.tags.map((t) => String(t).toLowerCase())
+          : [category.toLowerCase()]
+
         try {
-          await this.client.rememberEntity('PROJECT', slug, {
-            label: `${candidate} Project`,
-            ref: `PRJ-${candidate.slice(0, 4).toUpperCase()}`,
-            reason: `Project context specified in conversation: "${query}"`,
-            confidence: 0.99,
-            importance: 'CRITICAL',
-            tags: [candidate.toLowerCase(), 'project', 'production'],
+          await this.client.rememberEntity(category, slug, {
+            label,
+            ref: `${category.slice(0, 3)}-${slug.slice(0, 6).toUpperCase()}`,
+            reason,
+            confidence: 0.98,
+            importance,
+            tags,
             createdAt: new Date().toISOString(),
           })
-          stored.push({ category: 'PROJECT', name: slug, label: `${candidate} Project`, reason: query })
+
+          await this.client.recordEvent(
+            'MEMORY_RECORDED',
+            { category, name: slug, label, reason, importance },
+            category,
+            slug,
+          )
+
+          stored.push({ category, name: slug, label, reason })
+          console.log(`[MemoryAgent] Stored durable memory to Sibyl: [${category}] ${slug}`)
+        } catch (storeErr) {
+          console.error(`[MemoryAgent] Error saving memory ${slug} to Sibyl:`, storeErr)
+        }
+      }
+    } catch (err) {
+      console.warn('[MemoryAgent] LLM extraction error, executing fallback pattern extraction:', err)
+      // Resilient fallback rule-based extraction
+      const fallbackItems = this.fallbackExtraction(trimmed)
+      for (const fb of fallbackItems) {
+        try {
+          await this.client.rememberEntity(fb.category, fb.name, {
+            label: fb.label,
+            ref: `${fb.category.slice(0, 3)}-${fb.name.slice(0, 6).toUpperCase()}`,
+            reason: fb.reason,
+            confidence: 0.95,
+            importance: fb.importance || 'HIGH',
+            tags: fb.tags || [fb.category.toLowerCase()],
+            createdAt: new Date().toISOString(),
+          })
+          stored.push({ category: fb.category, name: fb.name, label: fb.label, reason: fb.reason })
         } catch (e) {
-          console.warn('Failed storing project memory to Sibyl:', e)
+          console.error('[MemoryAgent] Fallback remember error:', e)
         }
-      }
-    }
-
-    // 2. Database & Technology Stack Facts
-    // Examples: "migrating production to Supabase", "our database is Supabase", "switched production database to Postgres"
-    const dbPatterns = [
-      /(?:migrating (?:production )?to|using|database is|runs on|switched (?:production )?to)\s+([A-Za-z0-9_\-]+)/i,
-      /(?:database|stack|infrastructure) (?:is|uses)\s+([A-Za-z0-9_\-]+)/i,
-    ]
-
-    let foundDbMatch = false
-    for (const pattern of dbPatterns) {
-      const match = query.match(pattern)
-      if (match && match[1]) {
-        const target = match[1].trim()
-        const targetLower = target.toLowerCase()
-        if (
-          targetLower.includes('supabase') ||
-          targetLower.includes('postgres') ||
-          targetLower.includes('firebase') ||
-          targetLower.includes('mongodb') ||
-          targetLower.includes('redis') ||
-          targetLower.includes('mysql') ||
-          targetLower.includes('dynamo')
-        ) {
-          foundDbMatch = true
-          const slug = `production_runs_on_${targetLower.replace(/\s+/g, '_')}`
-          try {
-            await this.client.rememberEntity('FACT', slug, {
-              label: `Production runs on ${target}`,
-              ref: 'FCT-DB',
-              reason: `Database infrastructure fact recorded: "${query}"`,
-              confidence: 0.99,
-              importance: 'HIGH',
-              relatedIds: extractedProjectName ? [`project_${extractedProjectName.toLowerCase().replace(/\s+/g, '_')}`] : ['atlas_production_migration'],
-              tags: ['database', targetLower, 'infrastructure'],
-              createdAt: new Date().toISOString(),
-            })
-            stored.push({ category: 'FACT', name: slug, label: `Production runs on ${target}`, reason: query })
-          } catch (e) {
-            console.warn('Failed storing database fact to Sibyl:', e)
-          }
-          break
-        }
-      }
-    }
-
-    // Direct check if user declared migration to Supabase
-    if (!foundDbMatch && (lower.includes('supabase') && (lower.includes('migrat') || lower.includes('database') || lower.includes('production')))) {
-      const slug = 'production_runs_on_supabase'
-      try {
-        await this.client.rememberEntity('FACT', slug, {
-          label: 'Production runs on Supabase',
-          ref: 'FCT-DB',
-          reason: `Database infrastructure fact recorded: "${query}"`,
-          confidence: 0.99,
-          importance: 'HIGH',
-          relatedIds: extractedProjectName ? [`project_${extractedProjectName.toLowerCase().replace(/\s+/g, '_')}`] : ['atlas_production_migration'],
-          tags: ['database', 'supabase', 'production'],
-          createdAt: new Date().toISOString(),
-        })
-        stored.push({ category: 'FACT', name: slug, label: 'Production runs on Supabase', reason: query })
-      } catch (e) {
-        console.warn('Failed storing direct Supabase fact to Sibyl:', e)
-      }
-    }
-
-    // 3. Decisions Extraction
-    if (lower.includes('we decided') || lower.includes('decided to') || lower.includes('decision:')) {
-      const name = `decision_${Date.now()}`
-      try {
-        await this.client.rememberEntity('DECISION', name, {
-          label: query.slice(0, 50),
-          ref: 'DEC-USR',
-          reason: query,
-          confidence: 0.95,
-          importance: 'HIGH',
-          tags: ['decision', 'architecture'],
-          createdAt: new Date().toISOString(),
-        })
-        stored.push({ category: 'DECISION', name, label: query.slice(0, 50), reason: query })
-      } catch (e) {
-        console.warn('Failed storing decision memory to Sibyl:', e)
-      }
-    }
-
-    // 4. Policy & Constraints Extraction
-    if (
-      (lower.includes('no ') || lower.includes('do not ') || lower.includes('never ') || lower.includes('blocked')) &&
-      (lower.includes('deploy') || lower.includes('friday') || lower.includes('release') || lower.includes('policy') || lower.includes('weekend'))
-    ) {
-      const name = `constraint_${Date.now()}`
-      try {
-        await this.client.rememberEntity('CONSTRAINT', name, {
-          label: query.slice(0, 50),
-          ref: 'CON-USR',
-          reason: query,
-          confidence: 0.98,
-          importance: 'CRITICAL',
-          tags: ['constraint', 'policy', 'deployment'],
-          createdAt: new Date().toISOString(),
-        })
-        stored.push({ category: 'CONSTRAINT', name, label: query.slice(0, 50), reason: query })
-      } catch (e) {
-        console.warn('Failed storing constraint memory to Sibyl:', e)
       }
     }
 
     return stored
   }
 
+  private fallbackExtraction(query: string): ExtractedMemoryItem[] {
+    const items: ExtractedMemoryItem[] = []
+    const lower = query.toLowerCase()
+
+    // Project extraction
+    const projectMatch = query.match(/(?:my project is (?:called )?|working on (?:project )?|building (?:project )?|project:?\s*)([A-Za-z0-9_\-]+)/i)
+    if (projectMatch && projectMatch[1] && !/^(the|a|an|this|that|and|our)$/i.test(projectMatch[1])) {
+      const proj = projectMatch[1].trim()
+      items.push({
+        category: 'PROJECT',
+        name: `project_${proj.toLowerCase()}`,
+        label: `${proj} Project`,
+        reason: `User declared project context: ${proj}`,
+        importance: 'CRITICAL',
+        tags: [proj.toLowerCase(), 'project'],
+      })
+    }
+
+    // Technology stack / database
+    if (lower.includes('supabase')) {
+      items.push({
+        category: 'FACT',
+        name: 'stack_supabase_database',
+        label: 'Database: Supabase',
+        reason: 'Supabase declared as active database infrastructure',
+        importance: 'HIGH',
+        tags: ['supabase', 'database', 'infrastructure'],
+      })
+    }
+    if (lower.includes('typescript')) {
+      items.push({
+        category: 'FACT',
+        name: 'stack_typescript_language',
+        label: 'Language: TypeScript',
+        reason: 'TypeScript declared as primary development language',
+        importance: 'HIGH',
+        tags: ['typescript', 'language'],
+      })
+    }
+
+    // Deployment preference
+    if (lower.includes('staged deployment') || lower.includes('staged deployments')) {
+      items.push({
+        category: 'PREFERENCE',
+        name: 'preference_staged_deployments',
+        label: 'Preference: Staged Deployments',
+        reason: 'User explicitly prefers staged deployments',
+        importance: 'MEDIUM',
+        tags: ['deployment', 'preference', 'staged'],
+      })
+    }
+
+    // Constraint (e.g. Friday deployments)
+    if ((lower.includes('no') || lower.includes('never') || lower.includes('block')) && lower.includes('friday') && lower.includes('deploy')) {
+      items.push({
+        category: 'CONSTRAINT',
+        name: 'constraint_no_friday_deployments',
+        label: 'Policy: No Friday Deployments',
+        reason: 'Deployments on Fridays are prohibited to preserve operational stability',
+        importance: 'CRITICAL',
+        tags: ['constraint', 'deployment', 'policy'],
+      })
+    }
+
+    return items
+  }
+
+  /**
+   * Generates a grounded, intelligent response using real Gemini,
+   * incorporating authoritative memories recalled from Sibyl.
+   */
   async generateResponse(
     query: string,
     recalled: AgentMemoryItem[],
     stored: StoredMemorySummary[],
   ): Promise<string> {
-    const apiKey = process.env.GEMINI_API_KEY
-    if (apiKey) {
-      try {
-        const ai = new GoogleGenerativeAI(apiKey)
-        const model = ai.getGenerativeModel({ model: 'gemini-1.5-flash' })
+    const { model } = this.getGeminiModel()
 
-        const memoryContext = recalled
-          .slice(0, 12)
-          .map((m) => `- [${m.category}] ${m.label || m.name}: ${m.reason || ''}`)
+    // Format recalled memories as explicit grounding context
+    const recalledContext = recalled.length > 0
+      ? recalled
+          .map((m) => `- [${m.category}] ${m.label || m.name}: ${m.reason || (m.body ? JSON.stringify(m.body) : '')}`)
           .join('\n')
+      : '(No existing prior memories found for this query in Sibyl)'
 
-        const storedContext = stored
-          .map((s) => `- Saved new durable memory [${s.category}]: ${s.label}`)
+    // Format newly stored memories if any were written
+    const storedContext = stored.length > 0
+      ? stored
+          .map((s) => `- [${s.category}] ${s.label}: ${s.reason || ''}`)
           .join('\n')
+      : ''
 
-        const prompt = `You are MEMORYOS, an AI operational operating system with persistent load-bearing memory powered by Sibyl.
+    const prompt = `You are MEMORYOS, an operational AI assistant with authoritative, persistent long-term memory powered by Sibyl.
 
 AUTHORITATIVE PERSISTENT MEMORIES RECALLED FROM SIBYL:
-${memoryContext || '(No existing memories matched query)'}
+${recalledContext}
 
-${storedContext ? `NEW MEMORIES JUST EXTRACTED & WRITTEN TO SIBYL:\n${storedContext}\n` : ''}
+${storedContext ? `DURABLE MEMORIES JUST COMMITTED TO SIBYL IN THIS TURN:\n${storedContext}\n` : ''}
 
-USER QUERY / COMMAND:
+USER MESSAGE:
 ${query}
 
-CORE DIRECTIVES:
-1. When asked questions about the project, architecture, database, decisions, constraints, or lessons, you MUST answer accurately using the RECALLED PERSISTENT MEMORIES from Sibyl.
-2. Specifically, if asked about database infrastructure for Atlas or production, state clearly that it is Supabase.
-3. If new facts or project details were provided, confirm they have been committed to Sibyl persistent memory.
-4. If a command attempts an action blocked by a constraint (e.g., Friday deployments), explicitly cite the blocking policy constraint.
-5. Keep answers authoritative, concise, and technically precise.`
+CORE INSTRUCTIONS:
+1. LOAD-BEARING REASONING:
+   - When the user asks about projects, technology stack, architecture, database, preferences, decisions, constraints, or previous interactions, your answer MUST be grounded in the AUTHORITATIVE PERSISTENT MEMORIES recalled from Sibyl above.
+   - For example, if recalled memories indicate that a project uses a specific database, language, or deployment strategy, cite and use those facts accurately.
+   - If a policy or constraint is recalled (e.g., no Friday deployments) and the user proposes an action that conflicts with it, strictly enforce the constraint and explain why.
 
-        const res = await model.generateContent(prompt)
-        const text = res.response.text()
-        if (text && text.trim()) {
-          return text.trim()
-        }
-      } catch (err) {
-        console.warn('Gemini API call failed, falling back to deterministic synthesis:', err)
+2. NEW DURABLE KNOWLEDGE:
+   - If new durable memories were just committed to Sibyl (shown above), acknowledge to the user that these facts/preferences/decisions have been durably stored in persistent memory.
+
+3. GENERAL & ARBITRARY INQUIRIES:
+   - If the user asks general knowledge questions, technical concepts (e.g., explaining quantum computing, writing a debounce function, Next.js optimization), reasoning questions, or unrelated inquiries, answer comprehensively, expertly, and naturally using your intelligence.
+   - Do NOT invent or hallucinate fake memories if none are present in the recalled context.
+
+4. TONE & STYLE:
+   - Authoritative, clean, precise, and operational.`
+
+    try {
+      const result = await model.generateContent(prompt)
+      const text = result.response.text()
+      if (!text || !text.trim()) {
+        throw new Error('Gemini returned an empty response.')
       }
+      return text.trim()
+    } catch (apiError: any) {
+      console.error('[MemoryAgent] Gemini API execution failed:', apiError)
+      throw new Error(`Gemini API execution failed: ${apiError.message || String(apiError)}`)
     }
-
-    // High-fidelity deterministic response synthesis
-    const lower = query.toLowerCase()
-
-    // 1. Database / Technology Stack query
-    if (lower.includes('database') || lower.includes('supabase') || lower.includes('postgres') || lower.includes('db')) {
-      const dbMem = recalled.find(
-        (m) =>
-          m.name.toLowerCase().includes('supabase') ||
-          (m.label && m.label.toLowerCase().includes('supabase')) ||
-          (m.reason && m.reason.toLowerCase().includes('supabase')),
-      )
-      if (dbMem) {
-        return `We are using **Supabase** for the database infrastructure (Atlas Production Migration). This is stored as a persistent architecture fact in Sibyl memory.`
-      }
-    }
-
-    // 2. Project context query
-    if (lower.includes('project') || lower.includes('atlas')) {
-      const projMem = recalled.find(
-        (m) =>
-          m.category === 'PROJECT' ||
-          m.name.toLowerCase().includes('atlas') ||
-          (m.label && m.label.toLowerCase().includes('atlas')),
-      )
-      if (projMem) {
-        return `Active project: **${projMem.label || projMem.name}**. Infrastructure is running on Supabase with persistent memory synchronization active.`
-      }
-    }
-
-    // 3. Deployment / Policy queries
-    if (lower.includes('deploy') || lower.includes('friday') || lower.includes('release')) {
-      const conMem = recalled.find(
-        (m) =>
-          m.category === 'CONSTRAINT' ||
-          m.name.toLowerCase().includes('friday'),
-      )
-      if (conMem) {
-        return `Policy Constraint Active: **${conMem.label || conMem.name}**. Friday production deployments are blocked to ensure weekend operational stability.`
-      }
-    }
-
-    // 4. Acknowledgment of newly written memories
-    if (stored.length > 0) {
-      const items = stored.map((s) => `• [${s.category}] **${s.label}**`).join('\n')
-      return `Committed to Sibyl persistent memory:\n${items}\n\nThese memories are durably stored in Sibyl and will persist across all future sessions.`
-    }
-
-    // 5. Default contextual answer
-    if (recalled.length > 0) {
-      const top = recalled[0]
-      return `Recalled persistent memory **${top.label || top.name}** [${top.category}]: ${top.reason || 'Active in operational context'}.`
-    }
-
-    return `Query processed. No conflicting operational constraints found in Sibyl persistent memory for "${query}".`
   }
 
+  /**
+   * Main orchestrator pipeline:
+   * User message → Recall Sibyl memories → Extract & store new memories →
+   * Gemini response grounded in Sibyl → Decision structure → Supabase persistence.
+   */
   async run(query: string, sessionId?: string): Promise<AgentRunResult> {
     const activeSessionId = sessionId || randomUUID()
 
-    // 1. Recall relevant memories from Sibyl
-    const allMemories = await this.recall(query)
+    // 1. Authoritative recall from Sibyl
+    const { allMemories, relevantMemories } = await this.recall(query)
 
-    // 2. Extract durable new memories and write to Sibyl
+    // 2. Extract durable operational memories from the message and write to Sibyl
     const storedMemories = await this.extractAndStoreMemories(query)
 
-    // 3. Select memories most relevant to this specific query
-    const queryTokens = query.toLowerCase().split(/\W+/).filter((t) => t.length > 2)
-    const relevantMemories = allMemories.filter((m) => {
-      const text = `${m.name} ${m.category} ${m.label || ''} ${m.reason || ''}`.toLowerCase()
-      return queryTokens.some((t) => text.includes(t))
-    })
-    const recalledMemories = relevantMemories.length > 0 ? relevantMemories : allMemories.slice(0, 4)
-
-    // 4. Generate contextual answer
-    const reply = await this.generateResponse(query, recalledMemories, storedMemories)
-
-    // 5. Build agent decision structure
-    const constraintHit = recalledMemories.find((m) => m.category === 'CONSTRAINT')?.name
-    const decision: AgentDecision = {
-      action: constraintHit && /deploy|release/i.test(query) ? 'BLOCK' : 'PROCEED_WITH_CONTEXT',
-      reason: reply.slice(0, 140),
-      memories: recalledMemories,
-      constraintHit,
-      confidence: 0.96,
+    // If new memories were just written, merge them into relevantMemories so they are immediately accessible
+    const effectiveRecalled = [...relevantMemories]
+    for (const s of storedMemories) {
+      if (!effectiveRecalled.some((m) => m.name === s.name)) {
+        effectiveRecalled.unshift({
+          category: s.category,
+          name: s.name,
+          label: s.label,
+          reason: s.reason,
+          confidence: 0.99,
+        })
+      }
     }
 
-    // 6. Persist user and assistant messages to Supabase session store
+    // 3. Generate grounded response from real Gemini
+    const reply = await this.generateResponse(query, effectiveRecalled, storedMemories)
+
+    // 4. Formulate operational decision metadata
+    const constraintHit = effectiveRecalled.find((m) => m.category === 'CONSTRAINT')?.name
+    const isDeployOrRelease = /deploy|release|ship|production/i.test(query)
+    const action = constraintHit && isDeployOrRelease ? 'BLOCK' : 'PROCEED_WITH_CONTEXT'
+
+    const decision: AgentDecision = {
+      action,
+      reason: reply.slice(0, 160),
+      memories: effectiveRecalled,
+      constraintHit: action === 'BLOCK' ? constraintHit : undefined,
+      confidence: 0.98,
+    }
+
+    // 5. Persist session metadata and messages to Supabase without replacing Sibyl
     try {
-      const now = new Date().toISOString()
-      await createOrUpdateSession(activeSessionId, `Chat: ${query.slice(0, 30)}`)
+      await createOrUpdateSession(activeSessionId, `Chat: ${query.slice(0, 32)}`)
 
       // Save user message
       await saveMessage({
@@ -411,16 +526,16 @@ CORE DIRECTIVES:
         session_id: activeSessionId,
         role: 'user',
         content: query,
-        created_at: now,
+        created_at: new Date().toISOString(),
       })
 
-      // Save assistant response
+      // Save assistant message
       await saveMessage({
         id: `ast-${randomUUID()}`,
         session_id: activeSessionId,
         role: 'assistant',
         content: reply,
-        recalled_memories: recalledMemories.map((m) => ({
+        recalled_memories: effectiveRecalled.map((m) => ({
           category: m.category,
           name: m.name,
           label: m.label || m.name,
@@ -434,14 +549,14 @@ CORE DIRECTIVES:
         created_at: new Date().toISOString(),
       })
     } catch (dbErr) {
-      console.warn('Failed to persist session to Supabase:', dbErr)
+      console.warn('[MemoryAgent] Supabase session logging note:', dbErr)
     }
 
     return {
       reply,
       decision,
       memories: allMemories,
-      recalledMemories,
+      recalledMemories: effectiveRecalled,
       storedMemories,
       sessionId: activeSessionId,
     }

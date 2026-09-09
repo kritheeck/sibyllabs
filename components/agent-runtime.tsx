@@ -244,7 +244,7 @@ export function AgentRuntimeProvider({ children }: { children: React.ReactNode }
       clearTimers()
       queryRunning.current = true
 
-      // Add user message to session chat log
+      // Add user message to session chat log immediately
       const userMessage: ChatMessage = {
         id: `usr-${Date.now()}`,
         role: 'user',
@@ -252,83 +252,106 @@ export function AgentRuntimeProvider({ children }: { children: React.ReactNode }
         timestamp: clockLabel(),
       }
       setMessages((prev) => [...prev, userMessage])
-
-      let elapsed = 0
-      QUERY_SEQUENCE.forEach((step) => {
-        const timer = setTimeout(() => {
-          setState(step.state)
-          if (step.event) pushEvent(step.event)
-        }, elapsed)
-        timers.current.push(timer)
-        elapsed += reducedMotion ? Math.min(step.hold, 150) : step.hold
+      setState('RECALLING')
+      pushEvent({
+        kind: 'MEMORY RECALLED',
+        detail: `Recalling persistent memories for: "${trimmed.slice(0, 30)}..."`,
       })
 
-      const done = setTimeout(async () => {
-        try {
-          const res = await fetch('/api/agent/run', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            cache: 'no-store',
-            body: JSON.stringify({ query: trimmed, sessionId }),
-          })
-          if (!res.ok) {
-            throw new Error(`Agent run failed: ${res.status}`)
-          }
-          const result = await res.json()
-          const memories: MemoryRecord[] = Array.isArray(result.memories) ? result.memories : []
-          const decision = result.decision ?? null
-          setLastDecision(decision)
+      try {
+        const fetchPromise = fetch('/api/agent/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          cache: 'no-store',
+          body: JSON.stringify({ query: trimmed, sessionId }),
+        })
 
-          const memoryIds = memories.map((m) => m.id).filter((id): id is string => Boolean(id))
-          if (memoryIds.length > 0) {
-            setActiveMemoryIds(memoryIds)
+        // Give a quick pulse to reasoning state
+        const reasoningTimer = setTimeout(() => {
+          if (queryRunning.current) {
+            setState('REASONING')
+            pushEvent({
+              kind: 'CONSTRAINT EVALUATED',
+              detail: 'Evaluating recalled context against active constraints',
+            })
           }
+        }, 300)
+        timers.current.push(reasoningTimer)
 
-          // Add assistant message to session chat log
-          const assistantMessage: ChatMessage = {
-            id: `ast-${Date.now()}`,
-            role: 'assistant',
-            text: result.reply || decision?.reason || 'Operational memory processed.',
-            recalledMemories: Array.isArray(result.recalledMemories) ? result.recalledMemories : undefined,
-            storedMemories: Array.isArray(result.storedMemories) ? result.storedMemories : undefined,
-            timestamp: clockLabel(),
-          }
-          setMessages((prev) => [...prev, assistantMessage])
-
-          // Refresh memory graph if new memories were written
-          if (Array.isArray(result.storedMemories) && result.storedMemories.length > 0) {
-            refresh()
-          }
-
-          const tone =
-            decision?.action === 'BLOCK'
-              ? 'critical'
-              : decision?.action === 'REVIEW'
-                ? 'warning'
-                : 'default'
-          pushEvent({
-            kind: decision?.action === 'BLOCK' ? 'CONSTRAINT EVALUATED' : 'DECISION',
-            detail: decision?.reason ?? 'Agent completed',
-            memoryIds,
-            tone,
-          })
-        } catch (err) {
-          console.error('Agent query execution error:', err)
-          const errorMessage: ChatMessage = {
-            id: `err-${Date.now()}`,
-            role: 'assistant',
-            text: 'Encountered transient error querying memory layer. Please retry.',
-            timestamp: clockLabel(),
-          }
-          setMessages((prev) => [...prev, errorMessage])
-        } finally {
-          queryRunning.current = false
-          setState('LISTENING')
+        const res = await fetchPromise
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+          throw new Error(errData.details || errData.error || `Agent run failed with status ${res.status}`)
         }
-      }, elapsed + 200)
-      timers.current.push(done)
+
+        const result = await res.json()
+        const memories: MemoryRecord[] = Array.isArray(result.memories) ? result.memories : []
+        const decision = result.decision ?? null
+        setLastDecision(decision)
+
+        const memoryIds = memories.map((m) => m.id).filter((id): id is string => Boolean(id))
+        if (memoryIds.length > 0) {
+          setActiveMemoryIds(memoryIds)
+        }
+
+        // Add assistant message to session chat log
+        const assistantMessage: ChatMessage = {
+          id: `ast-${Date.now()}`,
+          role: 'assistant',
+          text: result.reply || decision?.reason || 'Operational memory processed.',
+          recalledMemories: Array.isArray(result.recalledMemories) ? result.recalledMemories : undefined,
+          storedMemories: Array.isArray(result.storedMemories) ? result.storedMemories : undefined,
+          timestamp: clockLabel(),
+        }
+        setMessages((prev) => [...prev, assistantMessage])
+
+        // Refresh memory graph if new memories were written
+        if (Array.isArray(result.storedMemories) && result.storedMemories.length > 0) {
+          refresh()
+        }
+
+        const tone =
+          decision?.action === 'BLOCK'
+            ? 'critical'
+            : decision?.action === 'REVIEW'
+              ? 'warning'
+              : 'success'
+        pushEvent({
+          kind: decision?.action === 'BLOCK' ? 'CONSTRAINT EVALUATED' : 'DECISION',
+          detail: decision?.reason ?? 'Response generated with persistent memory',
+          memoryIds,
+          tone,
+        })
+
+        setState('SUCCESS')
+        const resetTimer = setTimeout(() => {
+          setState('LISTENING')
+          queryRunning.current = false
+        }, 1200)
+        timers.current.push(resetTimer)
+      } catch (err) {
+        console.error('Agent query execution error:', err)
+        setState('FAILED')
+        const errorMessage: ChatMessage = {
+          id: `err-${Date.now()}`,
+          role: 'assistant',
+          text: `Error querying memory layer: ${err instanceof Error ? err.message : String(err)}`,
+          timestamp: clockLabel(),
+        }
+        setMessages((prev) => [...prev, errorMessage])
+        pushEvent({
+          kind: 'DECISION',
+          detail: 'Transient error querying memory layer',
+          tone: 'critical',
+        })
+        const resetTimer = setTimeout(() => {
+          setState('LISTENING')
+          queryRunning.current = false
+        }, 2000)
+        timers.current.push(resetTimer)
+      }
     },
-    [clearTimers, pushEvent, reducedMotion, refresh, sessionId],
+    [clearTimers, pushEvent, refresh, sessionId],
   )
 
   useEffect(() => clearTimers, [clearTimers])

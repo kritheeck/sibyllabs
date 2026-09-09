@@ -1,0 +1,7 @@
+mcp>=1.29.0
+sibyl-memory-client>=0.7.0
+sibyl-memory-mcp>=0.1.14
+starlette>=0.37.0
+uvicorn>=0.30.0
+pydantic>=2.7.0
+anyio>=4.4.0

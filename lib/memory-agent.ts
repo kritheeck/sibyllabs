@@ -64,6 +64,49 @@ const ALLOWED_CATEGORIES = new Set([
   'OUTCOME',
 ])
 
+async function generateContentWithRetry(
+  ai: GoogleGenerativeAI,
+  preferredModelName: string,
+  prompt: string,
+  extraConfig?: Record<string, unknown>,
+  maxRetries = 4,
+): Promise<any> {
+  const candidateModels = [
+    preferredModelName,
+    'gemini-3.6-flash',
+    'gemini-2.5-flash',
+  ].filter((v, i, a) => a.indexOf(v) === i)
+
+  let attempt = 0
+  let modelIdx = 0
+
+  while (true) {
+    const currentModelName = candidateModels[modelIdx] || preferredModelName
+    const model = ai.getGenerativeModel({ model: currentModelName, ...(extraConfig || {}) })
+    try {
+      return await model.generateContent(prompt)
+    } catch (err: any) {
+      attempt++
+      const isRetryable =
+        err?.status === 429 ||
+        err?.status === 503 ||
+        err?.status === 500 ||
+        /429|503|500|quota|rate limit|too many requests|high demand|overloaded|temporarily unavailable|try again later/i.test(err?.message || '')
+
+      if (isRetryable && attempt <= maxRetries) {
+        if (candidateModels.length > 1) {
+          modelIdx = (modelIdx + 1) % candidateModels.length
+        }
+        const delayMs = attempt * 2500 + Math.floor(Math.random() * 1000)
+        console.warn(`[MemoryAgent] Gemini transient issue (${err.status || 'rate/demand'}). Retrying in ${delayMs}ms with model ${candidateModels[modelIdx]} (attempt ${attempt}/${maxRetries})...`)
+        await new Promise((resolve) => setTimeout(resolve, delayMs))
+        continue
+      }
+      throw err
+    }
+  }
+}
+
 export class MemoryAgent {
   private client = getSibylClient()
 
@@ -73,11 +116,11 @@ export class MemoryAgent {
       throw new Error(
         'Missing required environment variable: GEMINI_API_KEY. ' +
         'Please configure GEMINI_API_KEY in .env.local. ' +
-        "The implementation expects Gemini model 'gemini-2.5-flash'.",
+        "The implementation expects Gemini model 'gemini-3.6-flash' (or 'gemini-2.5-flash').",
       )
     }
     const ai = new GoogleGenerativeAI(apiKey.trim())
-    const modelName = process.env.GEMINI_MODEL || 'gemini-2.5-flash'
+    const modelName = process.env.GEMINI_MODEL || 'gemini-3.6-flash'
     return { ai, modelName, model: ai.getGenerativeModel({ model: modelName }) }
   }
 
@@ -217,10 +260,6 @@ export class MemoryAgent {
 
     try {
       const { ai, modelName } = this.getGeminiModel()
-      const extractionModel = ai.getGenerativeModel({
-        model: modelName,
-        generationConfig: { responseMimeType: 'application/json' },
-      })
 
       const extractionPrompt = `You are the memory extraction engine for MEMORYOS.
 Analyze the following user statement and extract any durable, long-term operational knowledge that should be remembered in Sibyl memory.
@@ -257,7 +296,12 @@ Respond ONLY with a JSON array conforming to this schema:
   }
 ]`
 
-      const extractResult = await extractionModel.generateContent(extractionPrompt)
+      const extractResult = await generateContentWithRetry(
+        ai,
+        modelName,
+        extractionPrompt,
+        { generationConfig: { responseMimeType: 'application/json' } },
+      )
       const rawJson = extractResult.response.text().trim()
       let items: ExtractedMemoryItem[] = []
 
@@ -417,7 +461,7 @@ Respond ONLY with a JSON array conforming to this schema:
     recalled: AgentMemoryItem[],
     stored: StoredMemorySummary[],
   ): Promise<string> {
-    const { model } = this.getGeminiModel()
+    const { ai, modelName } = this.getGeminiModel()
 
     // Format recalled memories as explicit grounding context
     const recalledContext = recalled.length > 0
@@ -460,7 +504,7 @@ CORE INSTRUCTIONS:
    - Authoritative, clean, precise, and operational.`
 
     try {
-      const result = await model.generateContent(prompt)
+      const result = await generateContentWithRetry(ai, modelName, prompt)
       const text = result.response.text()
       if (!text || !text.trim()) {
         throw new Error('Gemini returned an empty response.')

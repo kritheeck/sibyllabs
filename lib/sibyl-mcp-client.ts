@@ -206,7 +206,45 @@ export class SibylMCPClient {
     })
   }
 
+  private async callRemoteTool(
+    baseUrl: string,
+    name: string,
+    args: Record<string, unknown>,
+  ): Promise<unknown> {
+    const cleanUrl = baseUrl.replace(/\/+$/, '')
+    const apiKey = process.env.SIBYL_API_KEY?.trim()
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    }
+    if (apiKey) {
+      headers['Authorization'] = `Bearer ${apiKey}`
+    }
+
+    const response = await fetch(`${cleanUrl}/tools/call`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ name, arguments: args }),
+      cache: 'no-store',
+    })
+
+    if (!response.ok) {
+      const errText = await response.text().catch(() => '')
+      throw new Error(`Remote Sibyl MCP tool call [${name}] failed (${response.status}): ${errText}`)
+    }
+
+    const data = await response.json()
+    if (data && typeof data === 'object' && 'result' in data) {
+      return data.result
+    }
+    return data
+  }
+
   async callTool(name: string, args: Record<string, unknown>): Promise<unknown> {
+    const remoteUrl = process.env.SIBYL_MCP_URL?.trim()
+    if (remoteUrl) {
+      return this.callRemoteTool(remoteUrl, name, args)
+    }
+
     await this.ensureInitialized()
     const response = await this.send('tools/call', {
       name,

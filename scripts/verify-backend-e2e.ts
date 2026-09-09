@@ -2,6 +2,8 @@ import 'dotenv/config'
 import { memoryAgent } from '../lib/memory-agent'
 import { getSibylClient } from '../lib/sibyl-mcp-client'
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
 async function verify() {
   console.log('====================================================')
   console.log('STARTING MEMORYOS COMPLETE BACKEND VERIFICATION')
@@ -27,6 +29,7 @@ async function verify() {
     throw new Error('Arbitrary query did not produce a real Gemini response')
   }
   console.log('Arbitrary query test: PASSED\n')
+  await sleep(2500)
 
   // 3. True Long-Term Memory Across Deleted Sessions
   console.log('--- TEST 3: SESSION A - FACT PERSISTENCE ---')
@@ -42,6 +45,7 @@ async function verify() {
     throw new Error('Failed to extract and persist durable memories in Session A')
   }
   console.log('Session A persistence test: PASSED\n')
+  await sleep(2500)
 
   // 4. End / Delete Session A (Discard session completely)
   console.log('--- TEST 4: PURGING SESSION A ---')
@@ -61,6 +65,7 @@ async function verify() {
     throw new Error(`Expected Gemini to answer 'Supabase' using recalled memory, got: ${resDb.reply}`)
   }
   console.log('Database recall test: PASSED (Supabase correctly retrieved from Sibyl)\n')
+  await sleep(2500)
 
   // 6. Query Session B - Language
   console.log('--- TEST 6: SESSION B - LANGUAGE QUERY ---')
@@ -74,6 +79,7 @@ async function verify() {
     throw new Error(`Expected Gemini to answer 'TypeScript' using recalled memory, got: ${resLang.reply}`)
   }
   console.log('Language recall test: PASSED (TypeScript correctly retrieved from Sibyl)\n')
+  await sleep(2500)
 
   // 7. Query Session B - Deployment Preference
   console.log('--- TEST 7: SESSION B - DEPLOYMENT PREFERENCE ---')
@@ -87,6 +93,7 @@ async function verify() {
     throw new Error(`Expected Gemini to recall 'staged' deployment preference, got: ${resPref.reply}`)
   }
   console.log('Deployment preference test: PASSED (Staged deployments recalled from Sibyl)\n')
+  await sleep(2500)
 
   // 8. Policy Constraint & Load-Bearing Reasoning
   console.log('--- TEST 8: LOAD-BEARING CONSTRAINT PERSISTENCE & ENFORCEMENT ---')
@@ -96,6 +103,7 @@ async function verify() {
   const resConstraint = await memoryAgent.run(constraintMsg, sessionCId)
   console.log('Gemini reply:', resConstraint.reply)
   console.log('Stored constraint in Sibyl:', resConstraint.storedMemories)
+  await sleep(2500)
 
   console.log('\nTesting enforcement in a fresh Session D...')
   const sessionDId = 'session-test-delta-' + Date.now()
